@@ -214,11 +214,11 @@ with tab1:
     with col_ex:
         examples = [
             "(직접 입력)",
-            "2020년 1월 800억원 압연기 설비를 2026년 1월 기준으로 환산",
+            "2020년 1월 800억원 펌프 설비를 2026년 1월 기준으로 환산",
             "2018년 3월 변압기 1,200억원을 2026년 1월 현재가로",
-            "2019년 6월 콘크리트 공사 500억원의 2026년 환산금액은?",
-            "2017년 5월 크레인 300억원을 2026년 1월 기준으로",
-            "2020년 7월 케이블 설치 150억원 2026년 1월 환산",
+            "2019년 6월 시멘트 공사 500억원의 2026년 환산금액은?",
+            "2017년 5월 철강 300억원을 2026년 1월 기준으로",
+            "2020년 7월 케이블 150억원 2026년 1월 환산",
         ]
         selected_ex = st.selectbox("💡 예시 선택", examples)
 
@@ -353,63 +353,82 @@ with tab1:
 # ═══════════════════════════════════════════
 with tab2:
     st.subheader("🔍 설비 카테고리별 PPI 시계열 조회")
-    st.caption("대분류 → 중분류 → 세부 품목 순으로 선택해 해당 설비의 PPI 추이를 확인")
+    st.caption("ECOS가 실제로 제공하는 품목 목록에서 선택 → 100% 조회 성공")
 
-    input_mode = st.radio(
-        "입력 방식",
-        ["📋 카테고리에서 선택", "⌨️ ITEM_CODE 직접 입력 (Tab 5에서 찾은 실제 코드)"],
-        horizontal=True,
-        key="tab2_mode",
-    )
+    # ★ ECOS 실제 카탈로그 로드
+    from data.ppi_categories import CATEGORY_FILTERS, filter_catalog_by_category
+    from utils.ecos_catalog import get_catalog
 
-    if input_mode.startswith("📋"):
-        col1, col2 = st.columns(2)
-        with col1:
-            major = st.selectbox("1️⃣ 대분류", list(EQUIPMENT_CATEGORIES.keys()))
-        with col2:
-            mid_options = list(EQUIPMENT_CATEGORIES[major].keys())
-            mid = st.selectbox("2️⃣ 중분류", mid_options)
-
-        sub_items = EQUIPMENT_CATEGORIES[major][mid]
-        sub_labels = [f"{it['name']} — {it['desc']}" for it in sub_items]
-        sub_idx = st.selectbox(
-            "3️⃣ 세부 품목",
-            range(len(sub_labels)),
-            format_func=lambda i: sub_labels[i],
-        )
-        selected_item = sub_items[sub_idx]
-        active_code = selected_item["code"]
-        active_name = selected_item["name"]
-
-        # ★ LIVE 모드: 자동 매칭으로 placeholder → 실제 코드 변환
-        if not use_demo and os.getenv("ECOS_API_KEY"):
-            try:
-                from utils.ecos_catalog import get_catalog, auto_match_code
-                catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
-                if catalog is not None and len(catalog) > 0:
-                    query_text = f"{selected_item['name']} {selected_item.get('desc', '')}"
-                    best, _ = auto_match_code(query_text, catalog)
-                    if best and best["score"] >= 5.0:
-                        active_code = best["code"]
-                        st.success(
-                            f"🎯 자동 매칭: **{selected_item['name']}** → "
-                            f"ECOS `{best['code']}` ({best['name']}) | 점수 {best['score']:.1f}"
-                        )
-                        active_name = f"{selected_item['name']} ({best['name']})"
-            except Exception:
-                pass
-
-        st.info(f"📌 선택: **{active_name}** | 사용 코드: `{active_code}` | {selected_item['desc']}")
+    if use_demo:
+        st.info("📦 DEMO 모드에서는 가상 데이터만 조회 가능합니다. LIVE 모드로 전환하면 ECOS 실제 품목이 뜹니다.")
+        active_code = "DEMO_DEFAULT"
+        active_name = "데모 품목"
+    elif not os.getenv("ECOS_API_KEY"):
+        st.warning("⚠️ 사이드바에 ECOS API Key를 먼저 입력해 주세요.")
+        st.stop()
     else:
-        col_m1, col_m2 = st.columns([1, 2])
-        with col_m1:
-            active_code = st.text_input("ITEM_CODE", value="", placeholder="예: 5020",
-                                         key="tab2_manual_code")
-        with col_m2:
-            active_name = st.text_input("품목명 (표시용)", value="사용자 지정 품목",
-                                         key="tab2_manual_name")
-        if not active_code:
-            st.warning("⚠️ ITEM_CODE를 입력하세요. (Tab 5에서 검색한 실제 코드 사용 권장)")
+        input_mode = st.radio(
+            "입력 방식",
+            ["📂 카테고리 필터로 선택", "🔍 이름으로 검색", "⌨️ ITEM_CODE 직접 입력"],
+            horizontal=True,
+            key="tab2_mode",
+        )
+
+        catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+        if catalog is None or len(catalog) == 0:
+            st.error("❌ ECOS 품목 카탈로그 로드 실패. 사이드바에서 키를 확인하세요.")
+            st.stop()
+
+        active_code = None
+        active_name = None
+
+        if input_mode.startswith("📂"):
+            # 카테고리 → ECOS 실제 품목 드롭다운
+            col_c1, col_c2 = st.columns([1, 2])
+            with col_c1:
+                cat = st.selectbox("1️⃣ 대분류", list(CATEGORY_FILTERS.keys()),
+                                    help="카테고리별 키워드로 ECOS 품목 필터")
+            filtered = filter_catalog_by_category(catalog, cat)
+            with col_c2:
+                if len(filtered) == 0:
+                    st.warning(f"'{cat}' 키워드와 매칭되는 ECOS 품목이 없습니다.")
+                    st.stop()
+                options = filtered.apply(
+                    lambda r: f"{r['ITEM_NAME']}  [코드: {r['ITEM_CODE']}]", axis=1
+                ).tolist()
+                sel = st.selectbox(f"2️⃣ ECOS 실제 품목 ({len(filtered)}개)", options)
+                sel_idx = options.index(sel)
+                row = filtered.iloc[sel_idx]
+                active_code = str(row["ITEM_CODE"])
+                active_name = str(row["ITEM_NAME"])
+
+        elif input_mode.startswith("🔍"):
+            kw = st.text_input("품목명 검색", placeholder="예: 펌프, 변압기, 시멘트, 케이블")
+            if kw.strip():
+                matched = catalog[catalog["ITEM_NAME"].astype(str).str.contains(kw.strip(), na=False)]
+                if len(matched) == 0:
+                    st.warning(f"'{kw}' 포함 품목 없음")
+                else:
+                    options = matched.apply(
+                        lambda r: f"{r['ITEM_NAME']}  [코드: {r['ITEM_CODE']}]", axis=1
+                    ).tolist()
+                    sel = st.selectbox(f"검색 결과 ({len(matched)}개)", options)
+                    sel_idx = options.index(sel)
+                    row = matched.iloc[sel_idx]
+                    active_code = str(row["ITEM_CODE"])
+                    active_name = str(row["ITEM_NAME"])
+
+        else:  # 직접 입력
+            col_m1, col_m2 = st.columns([1, 2])
+            with col_m1:
+                active_code = st.text_input("ITEM_CODE", value="", placeholder="예: 41001",
+                                             key="tab2_manual_code")
+            with col_m2:
+                active_name = st.text_input("품목명 (표시용)", value="사용자 지정",
+                                             key="tab2_manual_name")
+
+        if active_code:
+            st.info(f"📌 선택: **{active_name}** | ECOS 코드: `{active_code}`")
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -486,19 +505,64 @@ with tab2:
 # ═══════════════════════════════════════════
 with tab3:
     st.subheader("📈 여러 설비 PPI 추이 비교")
-    st.caption("기계 vs 전기 vs 토건 설비의 물가 변동을 한 화면에서 비교 — 투자 우선순위 판단에 활용")
+    st.caption("ECOS 실제 품목 중에서 선택해 비교 — 기계 vs 전기 vs 토건 물가 변동 한눈에 보기")
 
-    all_items = get_all_items()
-    # 종합지수는 기본 선택에서 제외
-    default_candidates = [i for i, it in enumerate(all_items) if it["major"] != "📊 종합 지수"]
-    item_labels = [f"{it['major'].split()[0]} {it['name']}" for it in all_items]
+    # ★ ECOS 실제 카탈로그 로드
+    from data.ppi_categories import CATEGORY_FILTERS, filter_catalog_by_category
+    from utils.ecos_catalog import get_catalog
 
-    selected_indices = st.multiselect(
-        "비교할 품목 선택 (2~6개 권장)",
-        range(len(item_labels)),
-        default=default_candidates[:4] if len(default_candidates) >= 4 else default_candidates,
-        format_func=lambda i: item_labels[i],
-    )
+    if use_demo:
+        st.warning("📦 DEMO 모드에서는 여러 품목 비교가 제한됩니다. LIVE 모드로 전환하세요.")
+        selected_rows = []
+    elif not os.getenv("ECOS_API_KEY"):
+        st.warning("⚠️ 사이드바에 ECOS API Key를 먼저 입력해 주세요.")
+        selected_rows = []
+    else:
+        catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+        if catalog is None or len(catalog) == 0:
+            st.error("❌ ECOS 카탈로그 로드 실패")
+            selected_rows = []
+        else:
+            st.markdown("##### 🗂️ 카테고리 필터")
+            filter_cats = st.multiselect(
+                "대분류 (선택 시 해당 키워드 품목만 표시)",
+                list(CATEGORY_FILTERS.keys()),
+                default=["🏭 기계 설비", "⚡ 전기 설비", "🏗️ 토건/구조 설비"],
+                key="tab3_cats",
+            )
+
+            # 선택된 카테고리들의 키워드 합집합으로 필터
+            if filter_cats:
+                import pandas as _pd
+                filtered_dfs = [filter_catalog_by_category(catalog, c) for c in filter_cats]
+                pool = _pd.concat(filtered_dfs).drop_duplicates(subset=["ITEM_CODE"]).reset_index(drop=True)
+            else:
+                pool = catalog
+
+            st.caption(f"🔎 필터링된 ECOS 품목: **{len(pool)}개** — 아래에서 2~6개 선택")
+
+            # 품목명 + 코드 라벨
+            pool_labels = pool.apply(
+                lambda r: f"{r['ITEM_NAME']}  [코드: {r['ITEM_CODE']}]", axis=1
+            ).tolist()
+
+            # 기본 선택: 첫 4개
+            default_sel = pool_labels[:4] if len(pool_labels) >= 4 else pool_labels
+            selected_labels = st.multiselect(
+                "비교할 ECOS 품목 선택 (2~6개 권장)",
+                pool_labels,
+                default=default_sel,
+                key="tab3_selected",
+            )
+
+            # 선택된 라벨 → 원본 행
+            selected_rows = []
+            for lbl in selected_labels:
+                idx = pool_labels.index(lbl)
+                selected_rows.append({
+                    "code": str(pool.iloc[idx]["ITEM_CODE"]),
+                    "name": str(pool.iloc[idx]["ITEM_NAME"]),
+                })
 
     col_a, col_b, col_c = st.columns(3)
     with col_a:
@@ -510,7 +574,7 @@ with tab3:
                                  help="체크 시 각 시계열의 시작값을 100으로 맞춰 변동 폭만 비교")
 
     if st.button("📊 비교 차트 생성", type="primary", key="tab3_btn"):
-        if not selected_indices:
+        if not selected_rows:
             st.warning("품목을 1개 이상 선택해 주세요.")
         else:
             try:
@@ -521,28 +585,9 @@ with tab3:
                 skipped = []
                 progress = st.progress(0, text="데이터 조회 중...")
 
-                # ★ LIVE 모드면 ECOS 카탈로그를 한 번만 로드해 자동 매칭에 재사용
-                catalog = None
-                if not use_demo and os.getenv("ECOS_API_KEY"):
-                    try:
-                        from utils.ecos_catalog import get_catalog, auto_match_code
-                        catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
-                    except Exception as e:
-                        st.warning(f"카탈로그 로드 실패 — 원본 코드로 조회 시도: {e}")
-
-                for idx, item_idx in enumerate(selected_indices):
-                    item = all_items[item_idx]
-                    # ★ LIVE 모드: 실제 ECOS 코드로 자동 매칭
+                for idx, item in enumerate(selected_rows):
                     actual_code = item["code"]
                     matched_name = item["name"]
-                    if catalog is not None and len(catalog) > 0:
-                        # 품목명 + 설명 합쳐서 키워드 확보력 ↑
-                        query_text = f"{item['name']} {item.get('desc', '')}"
-                        best, _ = auto_match_code(query_text, catalog)
-                        if best and best["score"] >= 5.0:
-                            actual_code = best["code"]
-                            matched_name = f"{item['name']} → {best['name']}"
-
                     try:
                         df = client.get_ppi(actual_code, start_m, end_m)
                         df["TIME_DT"] = pd.to_datetime(df["TIME"], format="%Y%m")
@@ -560,17 +605,16 @@ with tab3:
                         ))
                         change = (y_vals[-1] / y_vals[0] - 1) * 100
                         summary_data.append({
-                            "품목(요청→실제)": matched_name,
+                            "품목": matched_name,
                             "ECOS 코드": actual_code,
-                            "카테고리": item["major"],
                             "시작 PPI": round(float(y_vals[0]), 2),
                             "종료 PPI": round(float(y_vals[-1]), 2),
                             "변동률(%)": round(change, 2),
                         })
                     except Exception as e:
                         skipped.append({"name": item["name"], "code": actual_code, "err": str(e)})
-                    progress.progress((idx + 1) / len(selected_indices),
-                                      text=f"{idx + 1}/{len(selected_indices)} 완료")
+                    progress.progress((idx + 1) / len(selected_rows),
+                                      text=f"{idx + 1}/{len(selected_rows)} 완료")
 
                 progress.empty()
 
@@ -579,10 +623,6 @@ with tab3:
                     with st.expander(f"⚠️ 조회 실패 {len(skipped)}건 — 펼쳐서 확인"):
                         for s in skipped:
                             st.markdown(f"- **{s['name']}** (코드 `{s['code']}`)\n  - {s['err']}")
-                        st.info(
-                            "💡 **Tip**: 자동 매칭이 적합한 품목을 못 찾았을 수 있습니다. "
-                            "Tab 5에서 검색한 실제 코드를 Tab 2에서 개별 조회해 보세요."
-                        )
 
                 if not summary_data:
                     st.error("❌ 모든 품목 조회 실패 — ECOS 키/기간을 확인하세요.")
@@ -607,7 +647,7 @@ with tab3:
                     st.dataframe(df_sum, use_container_width=True, hide_index=True)
 
                     fig_bar = px.bar(
-                        df_sum, x="품목(요청→실제)", y="변동률(%)",
+                        df_sum, x="품목", y="변동률(%)",
                         color="변동률(%)", color_continuous_scale="RdYlGn_r",
                         title="💹 기간 누적 변동률 비교 (내림차순)",
                         text="변동률(%)",
@@ -621,8 +661,8 @@ with tab3:
                     bot = df_sum.iloc[-1]
                     st.markdown(f"""
                     #### 💡 분석 인사이트
-                    - 가장 큰 상승: **{top['품목(요청→실제)']}** ({top['변동률(%)']:+.2f}%)
-                    - 가장 작은 상승: **{bot['품목(요청→실제)']}** ({bot['변동률(%)']:+.2f}%)
+                    - 가장 큰 상승: **{top['품목']}** ({top['변동률(%)']:+.2f}%)
+                    - 가장 작은 상승: **{bot['품목']}** ({bot['변동률(%)']:+.2f}%)
                     - 품목 간 변동률 격차: **{top['변동률(%)'] - bot['변동률(%)']:.2f}%p**
                     - 👉 투자 의사결정 시 설비별 물가 민감도 차이를 감안해 예비비 배분 검토 필요
                     """)
