@@ -249,45 +249,54 @@ tab_ai, tab_ppi, tab_multi, tab_scn, tab_port, tab_heat, tab_share = st.tabs([
 # 공통 헬퍼: 기간 프리셋 버튼
 # ═══════════════════════════════════════════
 def period_preset_buttons(key_prefix: str, default_start="201501", default_end="202612"):
-    """기간 프리셋 버튼 + 시작/종료 입력"""
+    """기간 프리셋 버튼 + 시작/종료 입력 (프리셋 클릭 시 즉시 반영)"""
     st.markdown("##### 📅 기간 설정")
-    p1, p2, p3, p4, p5, p6 = st.columns(6)
+
+    start_key = f"{key_prefix}_start_input"
+    end_key = f"{key_prefix}_end_input"
+
+    # 최초 1회 초기값 세팅 (위젯 key 자체에 저장)
+    if start_key not in st.session_state:
+        st.session_state[start_key] = default_start
+    if end_key not in st.session_state:
+        st.session_state[end_key] = default_end
+
     today = datetime.now()
-    preset = None
 
     def _ym(year, month):
         return f"{year:04d}{month:02d}"
 
-    if p1.button("최근 1년", key=f"{key_prefix}_p1", use_container_width=True):
-        preset = (_ym(today.year - 1, today.month), _ym(today.year, today.month))
-    if p2.button("최근 3년", key=f"{key_prefix}_p3", use_container_width=True):
-        preset = (_ym(today.year - 3, today.month), _ym(today.year, today.month))
-    if p3.button("최근 5년", key=f"{key_prefix}_p5", use_container_width=True):
-        preset = (_ym(today.year - 5, today.month), _ym(today.year, today.month))
-    if p4.button("최근 10년", key=f"{key_prefix}_p10", use_container_width=True):
-        preset = (_ym(today.year - 10, today.month), _ym(today.year, today.month))
-    if p5.button("팬데믹 이후", key=f"{key_prefix}_p_covid", use_container_width=True):
-        preset = ("202001", _ym(today.year, today.month))
-    if p6.button("전체(2010~)", key=f"{key_prefix}_p_all", use_container_width=True):
-        preset = ("201001", _ym(today.year, today.month))
+    def _apply(preset_start, preset_end):
+        """위젯 key에 직접 써서 다음 렌더에 즉시 반영되게 한다."""
+        st.session_state[start_key] = preset_start
+        st.session_state[end_key] = preset_end
 
-    if preset:
-        st.session_state[f"{key_prefix}_start"] = preset[0]
-        st.session_state[f"{key_prefix}_end"] = preset[1]
+    p1, p2, p3, p4, p5, p6 = st.columns(6)
+    if p1.button("최근 1년", key=f"{key_prefix}_p1", use_container_width=True):
+        _apply(_ym(today.year - 1, today.month), _ym(today.year, today.month))
+        st.rerun()
+    if p2.button("최근 3년", key=f"{key_prefix}_p3", use_container_width=True):
+        _apply(_ym(today.year - 3, today.month), _ym(today.year, today.month))
+        st.rerun()
+    if p3.button("최근 5년", key=f"{key_prefix}_p5", use_container_width=True):
+        _apply(_ym(today.year - 5, today.month), _ym(today.year, today.month))
+        st.rerun()
+    if p4.button("최근 10년", key=f"{key_prefix}_p10", use_container_width=True):
+        _apply(_ym(today.year - 10, today.month), _ym(today.year, today.month))
+        st.rerun()
+    if p5.button("팬데믹 이후", key=f"{key_prefix}_p_covid", use_container_width=True):
+        _apply("202001", _ym(today.year, today.month))
+        st.rerun()
+    if p6.button("전체(2010~)", key=f"{key_prefix}_p_all", use_container_width=True):
+        _apply("201001", _ym(today.year, today.month))
+        st.rerun()
 
     c1, c2 = st.columns(2)
     with c1:
-        start = st.text_input(
-            "시작 (YYYYMM)",
-            value=st.session_state.get(f"{key_prefix}_start", default_start),
-            key=f"{key_prefix}_start_input",
-        )
+        start = st.text_input("시작 (YYYYMM)", key=start_key)
     with c2:
-        end = st.text_input(
-            "종료 (YYYYMM)",
-            value=st.session_state.get(f"{key_prefix}_end", default_end),
-            key=f"{key_prefix}_end_input",
-        )
+        end = st.text_input("종료 (YYYYMM)", key=end_key)
+
     return start, end
 
 
@@ -315,7 +324,8 @@ with tab_ai:
     user_query = st.text_area("요청 내용", value=default_q, height=80,
                                placeholder="예: 2020년 1월 800억원 펌프 2026년 1월 환산")
 
-    if st.button("🚀 AI Agent 실행", type="primary", use_container_width=True):
+    run_clicked = st.button("🚀 AI Agent 실행", type="primary", use_container_width=True)
+    if run_clicked:
         if not user_query.strip():
             st.warning("요청 내용을 입력해 주세요.")
         elif not use_demo and not os.getenv("ECOS_API_KEY"):
@@ -328,221 +338,8 @@ with tab_ai:
                         override_code=(override_code.strip() or None),
                         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
                     )
-
-                    # 데이터 소스
-                    st.caption(f"{result['data_source']}  |  🧠 {result['used_llm']}")
-
-                    # 자동 매칭 결과
-                    if result["parsed"].get("auto_matched"):
-                        ami = result["parsed"].get("auto_match_info", {})
-                        st.success(
-                            f"🎯 **자동 매칭**: 「{ami.get('matched_keyword','')}」 → "
-                            f"`{ami.get('code','')}` ({ami.get('name','')}) · 점수 {ami.get('score',0):.1f}"
-                        )
-
-                    # 고급 KPI 카드 4개
-                    parsed = result["parsed"]
-                    factor = result["factor"]
-                    orig = parsed["original_cost"]
-                    adj = result["adjusted_cost"]
-                    diff = adj - orig
-
-                    kc1, kc2, kc3, kc4 = st.columns(4)
-                    with kc1:
-                        st.markdown(kpi_card(
-                            "원금", f"{orig:,.0f} 억",
-                            delta=parsed.get("base_period", ""),
-                            icon="💰",
-                        ), unsafe_allow_html=True)
-                    with kc2:
-                        st.markdown(kpi_card(
-                            "보정계수", f"{factor:.4f}",
-                            delta=f"{(factor-1)*100:+.2f}%",
-                            delta_type="up" if factor > 1 else "down",
-                            icon="⚖️",
-                        ), unsafe_allow_html=True)
-                    with kc3:
-                        st.markdown(kpi_card(
-                            "증감액", f"{diff:+,.1f} 억",
-                            delta="현재가 기준",
-                            delta_type="up" if diff > 0 else "down",
-                            icon="📊",
-                        ), unsafe_allow_html=True)
-                    with kc4:
-                        st.markdown(kpi_card(
-                            "환산금액", f"{adj:,.1f} 억",
-                            delta=parsed.get("target_period", ""),
-                            delta_type="neutral",
-                            icon="🎯",
-                            highlight=True,
-                        ), unsafe_allow_html=True)
-
-                    st.markdown("<br>", unsafe_allow_html=True)
-
-                    # PPI 추이 차트 (rangeslider + fill)
-                    st.markdown(section_title("📈 PPI 추이 분석"), unsafe_allow_html=True)
-                    try:
-                        client = get_client()
-                        df_full = client.get_ppi(
-                            parsed["recommended_code"],
-                            "201501",
-                            parsed.get("target_period", "202612"),
-                        )
-                        df_full["TIME_DT"] = pd.to_datetime(df_full["TIME"], format="%Y%m")
-
-                        fig = go.Figure()
-                        fig.add_trace(go.Scatter(
-                            x=df_full["TIME_DT"], y=df_full["DATA_VALUE"],
-                            mode="lines", name="PPI",
-                            line=dict(color=POSCO_COLORS["primary"], width=2.5),
-                            fill="tozeroy",
-                            fillcolor="rgba(0,94,184,0.08)",
-                            hovertemplate="<b>%{x|%Y년 %m월}</b><br>PPI: %{y:.2f}<extra></extra>",
-                        ))
-
-                        # 기준/목표 시점 마커
-                        def _mark(period, label, color):
-                            try:
-                                t = pd.to_datetime(period, format="%Y%m")
-                                v = df_full[df_full["TIME"] == period]["DATA_VALUE"]
-                                if len(v) > 0:
-                                    fig.add_trace(go.Scatter(
-                                        x=[t], y=[float(v.iloc[0])],
-                                        mode="markers+text",
-                                        marker=dict(size=14, color=color, line=dict(color="white", width=2)),
-                                        text=[label], textposition="top center",
-                                        textfont=dict(size=11, color=color),
-                                        showlegend=False,
-                                        hovertemplate=f"<b>{label}</b><br>%{{x|%Y년 %m월}}<br>PPI: %{{y:.2f}}<extra></extra>",
-                                    ))
-                            except Exception:
-                                pass
-                        _mark(parsed["base_period"], "📍 기준", POSCO_COLORS["accent"])
-                        _mark(parsed["target_period"], "🎯 목표", POSCO_COLORS["danger"])
-
-                        fig.update_layout(
-                            title=f"{result['item_info'].get('name','품목')} PPI 시계열",
-                            xaxis=dict(rangeslider=dict(visible=True, thickness=0.05)),
-                            yaxis_title="PPI (2020=100)",
-                            height=480,
-                            hovermode="x unified",
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-
-                        # 보고서
-                        st.markdown(section_title("📝 AI 분석 보고서"), unsafe_allow_html=True)
-                        st.markdown(result["report"])
-
-                        # 내보내기
-                        st.markdown("##### 📤 내보내기")
-                        ex1, ex2, ex3 = st.columns(3)
-                        with ex1:
-                            pdf_bytes = generate_pdf_report(
-                                title=f"투자비 물가보정 리포트 — {result['item_info'].get('name', '')}",
-                                summary={
-                                    "품목": result["item_info"].get("name", ""),
-                                    "기준 시점": parsed["base_period"],
-                                    "목표 시점": parsed["target_period"],
-                                    "기준 PPI": f"{result['base_ppi']:.2f}",
-                                    "목표 PPI": f"{result['target_ppi']:.2f}",
-                                    "보정계수": f"{factor:.4f}",
-                                    "원금": f"{orig:,.1f} 억원",
-                                    "환산금액": f"{adj:,.1f} 억원",
-                                    "증감": f"{diff:+,.1f} 억원 ({(factor-1)*100:+.2f}%)",
-                                },
-                                body_text=result["report"],
-                                table_df=df_full[["TIME", "DATA_VALUE"]].rename(
-                                    columns={"TIME": "시점", "DATA_VALUE": "PPI"}
-                                ),
-                            )
-                            st.download_button(
-                                "📄 PDF 다운로드", pdf_bytes,
-                                f"PPI_리포트_{parsed['base_period']}_{parsed['target_period']}.pdf",
-                                "application/pdf", use_container_width=True,
-                            )
-                        with ex2:
-                            xlsx = to_excel_bytes({
-                                "요약": pd.DataFrame([{
-                                    "항목": k, "값": v,
-                                } for k, v in {
-                                    "품목": result["item_info"].get("name", ""),
-                                    "원금(억)": orig,
-                                    "환산금액(억)": adj,
-                                    "보정계수": factor,
-                                    "기준시점": parsed["base_period"],
-                                    "목표시점": parsed["target_period"],
-                                }.items()]),
-                                "PPI시계열": df_full[["TIME", "DATA_VALUE"]],
-                            })
-                            st.download_button(
-                                "📊 Excel 다운로드", xlsx,
-                                f"PPI_데이터_{parsed['base_period']}_{parsed['target_period']}.xlsx",
-                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True,
-                            )
-                        with ex3:
-                            share_url = (
-                                f"?code={parsed['recommended_code']}"
-                                f"&from={parsed['base_period']}&to={parsed['target_period']}"
-                            )
-                            st.code(share_url, language="text")
-                            st.caption("↑ URL 뒤에 붙이면 동일 화면")
-
-                    except Exception as e:
-                        st.warning(f"차트 생성 실패: {e}")
-
-                    # ───────────────────────────────────────────
-                    # 🆕 상승 원인 분석 (Gemini)
-                    # ───────────────────────────────────────────
-                    st.markdown("---")
-                    st.markdown("### 📰 상승 원인 분석 (AI)")
-                    st.caption("Gemini가 PPI 추이와 거시경제 이벤트를 연결해 왜 움직였는지 해설합니다.")
-
-                    if st.button("🧠 Gemini로 원인 분석 실행", key="explain_btn", use_container_width=True):
-                        if not os.getenv("GEMINI_API_KEY", "").strip():
-                            st.warning("⚠️ Gemini API Key가 설정되지 않았습니다. 좌측 사이드바에서 입력하세요.")
-                        else:
-                            try:
-                                from agents.ppi_agent import explain_price_change_gemini
-                                with st.spinner("Gemini가 거시경제 맥락을 분석 중입니다... (10~30초, 서버 혼잡 시 자동 재시도)"):
-                                    explanation = explain_price_change_gemini(
-                                        item_name=result["item_info"].get("name", ""),
-                                        item_code=parsed["recommended_code"],
-                                        ppi_df=df_full.rename(columns={"TIME": "date", "DATA_VALUE": "value"}),
-                                        base_period=parsed["base_period"],
-                                        target_period=parsed["target_period"],
-                                        factor=factor,
-                                        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-                                    )
-                                st.markdown(
-                                    f"<div style='background:linear-gradient(135deg,#f8fbff,#eef4ff);"
-                                    f"padding:1.5rem;border-radius:12px;border-left:4px solid #005EB8;"
-                                    f"margin-top:0.8rem'>{explanation}</div>",
-                                    unsafe_allow_html=True,
-                                )
-                            except Exception as e:
-                                err_str = str(e)
-                                if any(k in err_str for k in ["503", "UNAVAILABLE", "overloaded", "high demand"]):
-                                    st.warning(
-                                        "⏳ Google Gemini 서버가 현재 혼잡합니다. "
-                                        "**1~2분 후 다시 눌러주세요.** "
-                                        "또는 사이드바에서 `gemini-flash-latest` / `gemini-2.5-pro` 로 전환하면 해결되기도 합니다."
-                                    )
-                                elif "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                                    st.warning(
-                                        "🚦 무료 티어 분당 요청 한도 초과입니다. **30초~1분 후 재시도**하세요."
-                                    )
-                                elif "404" in err_str or "not available" in err_str.lower():
-                                    st.error(
-                                        f"❌ 모델을 찾을 수 없습니다: {err_str}\n\n"
-                                        "→ 사이드바에서 **다른 Gemini 모델**로 전환해주세요."
-                                    )
-                                else:
-                                    st.error(f"원인 분석 실패: {err_str}")
-
-                    with st.expander("🔧 파싱 상세"):
-                        st.json(parsed)
-
+                    # 🆕 세션에 결과 저장 — Gemini 버튼 눌러도 화면 유지
+                    st.session_state["tab1_result"] = result
                 except Exception as e:
                     err_str = str(e)
                     st.error(f"❌ 실행 오류: {e}")
@@ -550,6 +347,234 @@ with tab_ai:
                         st.info("💡 INFO-100: ECOS 키 확인 (따옴표/공백 제거 · 발급 후 1시간 대기)")
                     elif "INFO-200" in err_str:
                         st.info("💡 INFO-200: ⚙️ 강제 ITEM_CODE에 실제 코드를 넣어보세요")
+                    st.session_state.pop("tab1_result", None)
+
+    # 🆕 결과가 세션에 있으면 매 rerun마다 렌더 (Gemini 버튼 눌러도 유지)
+    if "tab1_result" in st.session_state:
+        result = st.session_state["tab1_result"]
+        try:
+
+            # 데이터 소스
+            st.caption(f"{result['data_source']}  |  🧠 {result['used_llm']}")
+
+            # 자동 매칭 결과
+            if result["parsed"].get("auto_matched"):
+                ami = result["parsed"].get("auto_match_info", {})
+                st.success(
+                    f"🎯 **자동 매칭**: 「{ami.get('matched_keyword','')}」 → "
+                    f"`{ami.get('code','')}` ({ami.get('name','')}) · 점수 {ami.get('score',0):.1f}"
+                )
+
+            # 고급 KPI 카드 4개
+            parsed = result["parsed"]
+            factor = result["factor"]
+            orig = parsed["original_cost"]
+            adj = result["adjusted_cost"]
+            diff = adj - orig
+
+            kc1, kc2, kc3, kc4 = st.columns(4)
+            with kc1:
+                st.markdown(kpi_card(
+                    "원금", f"{orig:,.0f} 억",
+                    delta=parsed.get("base_period", ""),
+                    icon="💰",
+                ), unsafe_allow_html=True)
+            with kc2:
+                st.markdown(kpi_card(
+                    "보정계수", f"{factor:.4f}",
+                    delta=f"{(factor-1)*100:+.2f}%",
+                    delta_type="up" if factor > 1 else "down",
+                    icon="⚖️",
+                ), unsafe_allow_html=True)
+            with kc3:
+                st.markdown(kpi_card(
+                    "증감액", f"{diff:+,.1f} 억",
+                    delta="현재가 기준",
+                    delta_type="up" if diff > 0 else "down",
+                    icon="📊",
+                ), unsafe_allow_html=True)
+            with kc4:
+                st.markdown(kpi_card(
+                    "환산금액", f"{adj:,.1f} 억",
+                    delta=parsed.get("target_period", ""),
+                    delta_type="neutral",
+                    icon="🎯",
+                    highlight=True,
+                ), unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # PPI 추이 차트 (rangeslider + fill)
+            st.markdown(section_title("📈 PPI 추이 분석"), unsafe_allow_html=True)
+            try:
+                client = get_client()
+                df_full = client.get_ppi(
+                    parsed["recommended_code"],
+                    "201501",
+                    parsed.get("target_period", "202612"),
+                )
+                df_full["TIME_DT"] = pd.to_datetime(df_full["TIME"], format="%Y%m")
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=df_full["TIME_DT"], y=df_full["DATA_VALUE"],
+                    mode="lines", name="PPI",
+                    line=dict(color=POSCO_COLORS["primary"], width=2.5),
+                    fill="tozeroy",
+                    fillcolor="rgba(0,94,184,0.08)",
+                    hovertemplate="<b>%{x|%Y년 %m월}</b><br>PPI: %{y:.2f}<extra></extra>",
+                ))
+
+                # 기준/목표 시점 마커
+                def _mark(period, label, color):
+                    try:
+                        t = pd.to_datetime(period, format="%Y%m")
+                        v = df_full[df_full["TIME"] == period]["DATA_VALUE"]
+                        if len(v) > 0:
+                            fig.add_trace(go.Scatter(
+                                x=[t], y=[float(v.iloc[0])],
+                                mode="markers+text",
+                                marker=dict(size=14, color=color, line=dict(color="white", width=2)),
+                                text=[label], textposition="top center",
+                                textfont=dict(size=11, color=color),
+                                showlegend=False,
+                                hovertemplate=f"<b>{label}</b><br>%{{x|%Y년 %m월}}<br>PPI: %{{y:.2f}}<extra></extra>",
+                            ))
+                    except Exception:
+                        pass
+                _mark(parsed["base_period"], "📍 기준", POSCO_COLORS["accent"])
+                _mark(parsed["target_period"], "🎯 목표", POSCO_COLORS["danger"])
+
+                fig.update_layout(
+                    title=f"{result['item_info'].get('name','품목')} PPI 시계열",
+                    xaxis=dict(rangeslider=dict(visible=True, thickness=0.05)),
+                    yaxis_title="PPI (2020=100)",
+                    height=480,
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # 보고서
+                st.markdown(section_title("📝 AI 분석 보고서"), unsafe_allow_html=True)
+                st.markdown(result["report"])
+
+                # 내보내기
+                st.markdown("##### 📤 내보내기")
+                ex1, ex2, ex3 = st.columns(3)
+                with ex1:
+                    pdf_bytes = generate_pdf_report(
+                        title=f"투자비 물가보정 리포트 — {result['item_info'].get('name', '')}",
+                        summary={
+                            "품목": result["item_info"].get("name", ""),
+                            "기준 시점": parsed["base_period"],
+                            "목표 시점": parsed["target_period"],
+                            "기준 PPI": f"{result['base_ppi']:.2f}",
+                            "목표 PPI": f"{result['target_ppi']:.2f}",
+                            "보정계수": f"{factor:.4f}",
+                            "원금": f"{orig:,.1f} 억원",
+                            "환산금액": f"{adj:,.1f} 억원",
+                            "증감": f"{diff:+,.1f} 억원 ({(factor-1)*100:+.2f}%)",
+                        },
+                        body_text=result["report"],
+                        table_df=df_full[["TIME", "DATA_VALUE"]].rename(
+                            columns={"TIME": "시점", "DATA_VALUE": "PPI"}
+                        ),
+                    )
+                    st.download_button(
+                        "📄 PDF 다운로드", pdf_bytes,
+                        f"PPI_리포트_{parsed['base_period']}_{parsed['target_period']}.pdf",
+                        "application/pdf", use_container_width=True,
+                    )
+                with ex2:
+                    xlsx = to_excel_bytes({
+                        "요약": pd.DataFrame([{
+                            "항목": k, "값": v,
+                        } for k, v in {
+                            "품목": result["item_info"].get("name", ""),
+                            "원금(억)": orig,
+                            "환산금액(억)": adj,
+                            "보정계수": factor,
+                            "기준시점": parsed["base_period"],
+                            "목표시점": parsed["target_period"],
+                        }.items()]),
+                        "PPI시계열": df_full[["TIME", "DATA_VALUE"]],
+                    })
+                    st.download_button(
+                        "📊 Excel 다운로드", xlsx,
+                        f"PPI_데이터_{parsed['base_period']}_{parsed['target_period']}.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
+                with ex3:
+                    share_url = (
+                        f"?code={parsed['recommended_code']}"
+                        f"&from={parsed['base_period']}&to={parsed['target_period']}"
+                    )
+                    st.code(share_url, language="text")
+                    st.caption("↑ URL 뒤에 붙이면 동일 화면")
+
+            except Exception as e:
+                st.warning(f"차트 생성 실패: {e}")
+
+            # ───────────────────────────────────────────
+            # 🆕 상승 원인 분석 (Gemini)
+            # ───────────────────────────────────────────
+            st.markdown("---")
+            st.markdown("### 📰 상승 원인 분석 (AI)")
+            st.caption("Gemini가 PPI 추이와 거시경제 이벤트를 연결해 왜 움직였는지 해설합니다.")
+
+            if st.button("🧠 Gemini로 원인 분석 실행", key="explain_btn", use_container_width=True):
+                if not os.getenv("GEMINI_API_KEY", "").strip():
+                    st.warning("⚠️ Gemini API Key가 설정되지 않았습니다. 좌측 사이드바에서 입력하세요.")
+                else:
+                    try:
+                        from agents.ppi_agent import explain_price_change_gemini
+                        with st.spinner("Gemini가 거시경제 맥락을 분석 중입니다... (10~30초, 서버 혼잡 시 자동 재시도)"):
+                            explanation = explain_price_change_gemini(
+                                item_name=result["item_info"].get("name", ""),
+                                item_code=parsed["recommended_code"],
+                                ppi_df=df_full.rename(columns={"TIME": "date", "DATA_VALUE": "value"}),
+                                base_period=parsed["base_period"],
+                                target_period=parsed["target_period"],
+                                factor=factor,
+                                model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                            )
+                        st.markdown(
+                            f"<div style='background:linear-gradient(135deg,#f8fbff,#eef4ff);"
+                            f"padding:1.5rem;border-radius:12px;border-left:4px solid #005EB8;"
+                            f"margin-top:0.8rem'>{explanation}</div>",
+                            unsafe_allow_html=True,
+                        )
+                    except Exception as e:
+                        err_str = str(e)
+                        if any(k in err_str for k in ["503", "UNAVAILABLE", "overloaded", "high demand"]):
+                            st.warning(
+                                "⏳ Google Gemini 서버가 현재 혼잡합니다. "
+                                "**1~2분 후 다시 눌러주세요.** "
+                                "또는 사이드바에서 `gemini-flash-latest` / `gemini-2.5-pro` 로 전환하면 해결되기도 합니다."
+                            )
+                        elif "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                            st.warning(
+                                "🚦 무료 티어 분당 요청 한도 초과입니다. **30초~1분 후 재시도**하세요."
+                            )
+                        elif "404" in err_str or "not available" in err_str.lower():
+                            st.error(
+                                f"❌ 모델을 찾을 수 없습니다: {err_str}\n\n"
+                                "→ 사이드바에서 **다른 Gemini 모델**로 전환해주세요."
+                            )
+                        else:
+                            st.error(f"원인 분석 실패: {err_str}")
+
+            with st.expander("🔧 파싱 상세"):
+                st.json(parsed)
+
+        except Exception as e:
+            err_str = str(e)
+            st.error(f"❌ 결과 표시 중 오류: {e}")
+            if "INFO-100" in err_str:
+                st.info("💡 INFO-100: ECOS 키 확인 (따옴표/공백 제거 · 발급 후 1시간 대기)")
+            elif "INFO-200" in err_str:
+                st.info("💡 INFO-200: ⚙️ 강제 ITEM_CODE에 실제 코드를 넣어보세요")
 
 
 # ═══════════════════════════════════════════
@@ -744,30 +769,27 @@ with tab_multi:
         else:
             try:
                 client = get_client()
-                fig = go.Figure()
                 summary = []
                 skipped = []
                 prog = st.progress(0, text="조회 중...")
                 all_series = {}
+                series_records = []  # 차트 재렌더용
 
                 for i, item in enumerate(selected_rows):
                     try:
                         df = client.get_ppi(item["code"], start_m, end_m)
                         df["TIME_DT"] = pd.to_datetime(df["TIME"], format="%Y%m")
                         y = df["DATA_VALUE"].values
-                        y_plot = y / y[0] * 100 if normalize and y[0] != 0 else y
 
                         all_series[item["name"]] = pd.Series(
                             df["DATA_VALUE"].values, index=df["TIME"].values
                         )
-
-                        fig.add_trace(go.Scatter(
-                            x=df["TIME_DT"], y=y_plot, mode="lines",
-                            name=item["name"],
-                            line=dict(color=SERIES_COLORS[i % len(SERIES_COLORS)], width=2.3),
-                            hovertemplate="<b>%{fullData.name}</b><br>%{x|%Y-%m}<br>"
-                                          + ("정규화: " if normalize else "PPI: ") + "%{y:.2f}<extra></extra>",
-                        ))
+                        series_records.append({
+                            "name": item["name"],
+                            "code": item["code"],
+                            "time_dt": df["TIME_DT"].tolist(),
+                            "values": df["DATA_VALUE"].tolist(),
+                        })
                         summary.append({
                             "품목": item["name"],
                             "ECOS 코드": item["code"],
@@ -780,52 +802,15 @@ with tab_multi:
                     prog.progress((i + 1) / len(selected_rows), text=f"{i + 1}/{len(selected_rows)}")
                 prog.empty()
 
-                if skipped:
-                    with st.expander(f"⚠️ 조회 실패 {len(skipped)}건"):
-                        for n, e in skipped:
-                            st.markdown(f"- **{n}**: {e}")
-
                 if summary:
-                    if normalize:
-                        fig.add_hline(y=100, line_dash="dash", line_color=POSCO_COLORS["neutral_500"],
-                                      annotation_text="시작점=100")
-                    fig.update_layout(
-                        title="📈 다중 설비 PPI 비교" + (" (정규화)" if normalize else ""),
-                        xaxis=dict(rangeslider=dict(visible=True, thickness=0.05)),
-                        yaxis_title="정규화 지수" if normalize else "PPI (2020=100)",
-                        height=560, hovermode="x unified",
-                        legend=dict(orientation="h", y=1.02, x=0),
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-
                     df_sum = pd.DataFrame(summary).sort_values("변동률(%)", ascending=False)
-                    st.dataframe(df_sum, use_container_width=True, hide_index=True)
-
-                    fig_bar = px.bar(
-                        df_sum, x="품목", y="변동률(%)", text="변동률(%)",
-                        color="변동률(%)",
-                        color_continuous_scale=[[0, POSCO_COLORS["success"]],
-                                                 [0.5, "#F1F5F9"],
-                                                 [1, POSCO_COLORS["danger"]]],
-                        title="💹 기간 누적 변동률 순위",
-                    )
-                    fig_bar.update_traces(texttemplate="%{text:+.1f}%", textposition="outside")
-                    fig_bar.update_layout(height=420)
-                    st.plotly_chart(fig_bar, use_container_width=True)
-
-                    # 결과 저장 (다른 탭에서 재사용)
-                    st.session_state["multi_series"] = all_series
+                    # 세션에 모든 결과 저장 → 아래 렌더 블록이 매 rerun마다 그림
+                    st.session_state["multi_series_records"] = series_records
                     st.session_state["multi_summary"] = df_sum
-
-                    # 내보내기
-                    xlsx = to_excel_bytes({"비교 요약": df_sum})
-                    st.download_button(
-                        "📊 Excel 다운로드", xlsx,
-                        f"다중설비_{start_m}_{end_m}.xlsx",
-                        use_container_width=True,
-                    )
-
-                    # 세션에 Gemini 분석용 데이터 저장
+                    st.session_state["multi_series"] = all_series
+                    st.session_state["multi_normalize"] = normalize
+                    st.session_state["multi_skipped"] = skipped
+                    st.session_state["multi_period"] = (start_m, end_m)
                     st.session_state["multi_items_info"] = [
                         {
                             "name": row["품목"],
@@ -838,9 +823,72 @@ with tab_multi:
                         }
                         for _, row in df_sum.iterrows()
                     ]
-                    st.session_state["multi_period"] = (start_m, end_m)
             except Exception as e:
                 st.error(f"오류: {e}")
+
+    # ───────────────────────────────────────────
+    # 📊 세션 데이터 기반 차트/표 재렌더 (버튼 클릭과 무관하게 유지)
+    # ───────────────────────────────────────────
+    if "multi_series_records" in st.session_state and st.session_state["multi_series_records"]:
+        records = st.session_state["multi_series_records"]
+        df_sum = st.session_state["multi_summary"]
+        normalize_render = st.session_state.get("multi_normalize", True)
+        skipped_render = st.session_state.get("multi_skipped", [])
+
+        if skipped_render:
+            with st.expander(f"⚠️ 조회 실패 {len(skipped_render)}건"):
+                for n, e in skipped_render:
+                    st.markdown(f"- **{n}**: {e}")
+
+        # 추이 차트
+        fig = go.Figure()
+        for i, rec in enumerate(records):
+            y_arr = rec["values"]
+            y_plot = [v / y_arr[0] * 100 for v in y_arr] if normalize_render and y_arr[0] != 0 else y_arr
+            fig.add_trace(go.Scatter(
+                x=rec["time_dt"], y=y_plot, mode="lines",
+                name=rec["name"],
+                line=dict(color=SERIES_COLORS[i % len(SERIES_COLORS)], width=2.3),
+                hovertemplate="<b>%{fullData.name}</b><br>%{x|%Y-%m}<br>"
+                              + ("정규화: " if normalize_render else "PPI: ") + "%{y:.2f}<extra></extra>",
+            ))
+        if normalize_render:
+            fig.add_hline(y=100, line_dash="dash", line_color=POSCO_COLORS["neutral_500"],
+                          annotation_text="시작점=100")
+        fig.update_layout(
+            title="📈 다중 설비 PPI 비교" + (" (정규화)" if normalize_render else ""),
+            xaxis=dict(rangeslider=dict(visible=True, thickness=0.05)),
+            yaxis_title="정규화 지수" if normalize_render else "PPI (2020=100)",
+            height=560, hovermode="x unified",
+            legend=dict(orientation="h", y=1.02, x=0),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # 요약표
+        st.dataframe(df_sum, use_container_width=True, hide_index=True)
+
+        # 변동률 순위 막대
+        fig_bar = px.bar(
+            df_sum, x="품목", y="변동률(%)", text="변동률(%)",
+            color="변동률(%)",
+            color_continuous_scale=[[0, POSCO_COLORS["success"]],
+                                     [0.5, "#F1F5F9"],
+                                     [1, POSCO_COLORS["danger"]]],
+            title="💹 기간 누적 변동률 순위",
+        )
+        fig_bar.update_traces(texttemplate="%{text:+.1f}%", textposition="outside")
+        fig_bar.update_layout(height=420)
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+        # 내보내기
+        s_m_cur, e_m_cur = st.session_state.get("multi_period", (start_m, end_m))
+        xlsx = to_excel_bytes({"비교 요약": df_sum})
+        st.download_button(
+            "📊 Excel 다운로드", xlsx,
+            f"다중설비_{s_m_cur}_{e_m_cur}.xlsx",
+            use_container_width=True,
+            key="multi_xlsx_dl",
+        )
 
     # ───────────────────────────────────────────
     # 🆕 AI 비교 분석 (Gemini) — Tab 3 하단
