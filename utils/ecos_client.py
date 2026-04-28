@@ -71,6 +71,52 @@ class ECOSClient:
         df = self.get_ppi(item_code, period, period, cycle)
         return float(df["DATA_VALUE"].iloc[0])
 
+    def list_items(self, stat_code: Optional[str] = None) -> pd.DataFrame:
+        """
+        통계표의 세부 품목(ITEM_CODE) 목록을 조회
+
+        Parameters
+        ----------
+        stat_code : str
+            통계표 코드 (기본값: 생산자물가지수 404Y014)
+
+        Returns
+        -------
+        pd.DataFrame
+            컬럼: ITEM_CODE, ITEM_NAME, P_ITEM_CODE, GRP_CODE, ITEM_LEVEL, START_TIME, END_TIME
+        """
+        code = stat_code or self.PPI_STAT_CODE
+        url = (
+            f"{self.BASE_URL}/StatisticItemList/{self.api_key}/json/kr/1/10000/{code}"
+        )
+        r = requests.get(url, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+
+        if "RESULT" in data:
+            raise RuntimeError(f"ECOS API 오류: {data['RESULT']}")
+
+        rows = data.get("StatisticItemList", {}).get("row", [])
+        if not rows:
+            raise ValueError(f"통계표 {code}의 품목 목록을 찾을 수 없습니다.")
+
+        df = pd.DataFrame(rows)
+        # 안정성: 주요 컬럼만 반환
+        keep_cols = [c for c in ["STAT_CODE", "STAT_NAME", "ITEM_CODE", "ITEM_NAME",
+                                  "P_ITEM_CODE", "ITEM_NAME_ALIAS", "ITEM_LEVEL",
+                                  "GRP_CODE", "GRP_NAME", "START_TIME", "END_TIME",
+                                  "CYCLE", "WGT", "UNIT_NAME"]
+                      if c in df.columns]
+        return df[keep_cols]
+
+    def search_items(self, keyword: str, stat_code: Optional[str] = None) -> pd.DataFrame:
+        """키워드로 품목 검색 (list_items 결과에서 필터)"""
+        df = self.list_items(stat_code)
+        if "ITEM_NAME" not in df.columns:
+            return df
+        mask = df["ITEM_NAME"].str.contains(keyword, case=False, na=False)
+        return df[mask].reset_index(drop=True)
+
     def get_multi_items(
         self,
         item_codes: List[str],

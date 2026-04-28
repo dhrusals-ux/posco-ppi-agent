@@ -170,11 +170,12 @@ def get_client():
 # ═══════════════════════════════════════════
 # 4개 탭
 # ═══════════════════════════════════════════
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🤖 AI Agent 환산",
     "🔍 설비별 PPI 조회",
     "📈 다중 설비 비교",
     "🧮 수동 계산기",
+    "🔎 품목 코드 탐색",
 ])
 
 # ═══════════════════════════════════════════
@@ -280,23 +281,42 @@ with tab2:
     st.subheader("🔍 설비 카테고리별 PPI 시계열 조회")
     st.caption("대분류 → 중분류 → 세부 품목 순으로 선택해 해당 설비의 PPI 추이를 확인")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        major = st.selectbox("1️⃣ 대분류", list(EQUIPMENT_CATEGORIES.keys()))
-    with col2:
-        mid_options = list(EQUIPMENT_CATEGORIES[major].keys())
-        mid = st.selectbox("2️⃣ 중분류", mid_options)
-
-    sub_items = EQUIPMENT_CATEGORIES[major][mid]
-    sub_labels = [f"{it['name']} — {it['desc']}" for it in sub_items]
-    sub_idx = st.selectbox(
-        "3️⃣ 세부 품목",
-        range(len(sub_labels)),
-        format_func=lambda i: sub_labels[i],
+    input_mode = st.radio(
+        "입력 방식",
+        ["📋 카테고리에서 선택", "⌨️ ITEM_CODE 직접 입력 (Tab 5에서 찾은 실제 코드)"],
+        horizontal=True,
+        key="tab2_mode",
     )
-    selected_item = sub_items[sub_idx]
 
-    st.info(f"📌 선택: **{selected_item['name']}** | ECOS 코드: `{selected_item['code']}` | {selected_item['desc']}")
+    if input_mode.startswith("📋"):
+        col1, col2 = st.columns(2)
+        with col1:
+            major = st.selectbox("1️⃣ 대분류", list(EQUIPMENT_CATEGORIES.keys()))
+        with col2:
+            mid_options = list(EQUIPMENT_CATEGORIES[major].keys())
+            mid = st.selectbox("2️⃣ 중분류", mid_options)
+
+        sub_items = EQUIPMENT_CATEGORIES[major][mid]
+        sub_labels = [f"{it['name']} — {it['desc']}" for it in sub_items]
+        sub_idx = st.selectbox(
+            "3️⃣ 세부 품목",
+            range(len(sub_labels)),
+            format_func=lambda i: sub_labels[i],
+        )
+        selected_item = sub_items[sub_idx]
+        active_code = selected_item["code"]
+        active_name = selected_item["name"]
+        st.info(f"📌 선택: **{active_name}** | ECOS 코드: `{active_code}` | {selected_item['desc']}")
+    else:
+        col_m1, col_m2 = st.columns([1, 2])
+        with col_m1:
+            active_code = st.text_input("ITEM_CODE", value="", placeholder="예: 5020",
+                                         key="tab2_manual_code")
+        with col_m2:
+            active_name = st.text_input("품목명 (표시용)", value="사용자 지정 품목",
+                                         key="tab2_manual_name")
+        if not active_code:
+            st.warning("⚠️ ITEM_CODE를 입력하세요. (Tab 5에서 검색한 실제 코드 사용 권장)")
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -305,63 +325,67 @@ with tab2:
         end = st.text_input("종료 (YYYYMM)", "202612")
 
     if st.button("📊 조회 및 시각화", type="primary", key="tab2_btn"):
-        try:
-            with st.spinner("데이터 조회 중..."):
-                client = get_client()
-                df = client.get_ppi(selected_item["code"], start, end)
-                df["TIME_DT"] = pd.to_datetime(df["TIME"], format="%Y%m")
+        if not active_code:
+            st.error("⚠️ ITEM_CODE를 먼저 지정하세요.")
+        else:
+            try:
+                with st.spinner("데이터 조회 중..."):
+                    client = get_client()
+                    df = client.get_ppi(active_code, start, end)
+                    df["TIME_DT"] = pd.to_datetime(df["TIME"], format="%Y%m")
 
-            # 요약 지표
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("데이터 포인트", f"{len(df)}개")
-            c2.metric("최저 PPI", f"{df['DATA_VALUE'].min():.2f}")
-            c3.metric("최고 PPI", f"{df['DATA_VALUE'].max():.2f}")
-            change = (df["DATA_VALUE"].iloc[-1] / df["DATA_VALUE"].iloc[0] - 1) * 100
-            c4.metric("기간 변동률", f"{change:+.2f}%")
+                # 요약 지표
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("데이터 포인트", f"{len(df)}개")
+                c2.metric("최저 PPI", f"{df['DATA_VALUE'].min():.2f}")
+                c3.metric("최고 PPI", f"{df['DATA_VALUE'].max():.2f}")
+                change = (df["DATA_VALUE"].iloc[-1] / df["DATA_VALUE"].iloc[0] - 1) * 100
+                c4.metric("기간 변동률", f"{change:+.2f}%")
 
-            # 메인 차트
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=df["TIME_DT"], y=df["DATA_VALUE"],
-                mode="lines+markers", name=selected_item["name"],
-                line=dict(color="#005EB8", width=2.5),
-                fill="tozeroy", fillcolor="rgba(0,94,184,0.1)",
-            ))
-            fig.add_hline(y=100, line_dash="dash", line_color="red",
-                          annotation_text="2020년 기준 (100)")
-            fig.update_layout(
-                title=f"📈 {selected_item['name']} PPI 추이",
-                xaxis_title="시점", yaxis_title="PPI (2020=100)",
-                height=500, hovermode="x unified",
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            # 연간 변동률 바차트
-            df["YEAR"] = df["TIME_DT"].dt.year
-            yearly = df.groupby("YEAR")["DATA_VALUE"].mean().reset_index()
-            yearly["YoY(%)"] = yearly["DATA_VALUE"].pct_change() * 100
-            yearly = yearly.dropna()
-
-            if len(yearly) > 0:
-                fig_yoy = px.bar(
-                    yearly, x="YEAR", y="YoY(%)",
-                    color="YoY(%)", color_continuous_scale="RdYlGn_r",
-                    title="📊 연도별 전년 대비 변동률 (YoY)",
+                # 메인 차트
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=df["TIME_DT"], y=df["DATA_VALUE"],
+                    mode="lines+markers", name=active_name,
+                    line=dict(color="#005EB8", width=2.5),
+                    fill="tozeroy", fillcolor="rgba(0,94,184,0.1)",
+                ))
+                fig.add_hline(y=100, line_dash="dash", line_color="red",
+                              annotation_text="2020년 기준 (100)")
+                fig.update_layout(
+                    title=f"📈 {active_name} PPI 추이 (코드: {active_code})",
+                    xaxis_title="시점", yaxis_title="PPI (2020=100)",
+                    height=500, hovermode="x unified",
                 )
-                fig_yoy.update_layout(height=350)
-                st.plotly_chart(fig_yoy, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
 
-            # 원본 데이터
-            with st.expander("📋 원본 데이터"):
-                st.dataframe(df[["TIME", "ITEM_NAME1", "DATA_VALUE"]], use_container_width=True)
-                csv = df.to_csv(index=False).encode("utf-8-sig")
-                st.download_button(
-                    "📥 CSV 다운로드", csv,
-                    f"PPI_{selected_item['name']}_{start}_{end}.csv",
-                    "text/csv",
-                )
-        except Exception as e:
-            st.error(f"❌ 조회 실패: {e}")
+                # 연간 변동률 바차트
+                df["YEAR"] = df["TIME_DT"].dt.year
+                yearly = df.groupby("YEAR")["DATA_VALUE"].mean().reset_index()
+                yearly["YoY(%)"] = yearly["DATA_VALUE"].pct_change() * 100
+                yearly = yearly.dropna()
+
+                if len(yearly) > 0:
+                    fig_yoy = px.bar(
+                        yearly, x="YEAR", y="YoY(%)",
+                        color="YoY(%)", color_continuous_scale="RdYlGn_r",
+                        title="📊 연도별 전년 대비 변동률 (YoY)",
+                    )
+                    fig_yoy.update_layout(height=350)
+                    st.plotly_chart(fig_yoy, use_container_width=True)
+
+                # 원본 데이터
+                with st.expander("📋 원본 데이터"):
+                    st.dataframe(df[["TIME", "ITEM_NAME1", "DATA_VALUE"]], use_container_width=True)
+                    csv = df.to_csv(index=False).encode("utf-8-sig")
+                    st.download_button(
+                        "📥 CSV 다운로드", csv,
+                        f"PPI_{active_name}_{start}_{end}.csv",
+                        "text/csv",
+                    )
+            except Exception as e:
+                st.error(f"❌ 조회 실패: {e}")
+                st.info("💡 팁: `INFO-200` 에러면 Tab 5(품목 코드 탐색)에서 실제 코드를 확인하세요.")
 
 
 # ═══════════════════════════════════════════
@@ -520,6 +544,122 @@ with tab4:
             st.latex(r"\text{환산금액} = \text{원금} \times \frac{\text{목표시점 PPI}}{\text{기준시점 PPI}}")
             st.code(f"{cost:,.2f} × ({target:.2f} / {base:.2f}) = {cost:,.2f} × {factor:.4f} = {adjusted:,.2f}",
                     language="text")
+
+
+# ═══════════════════════════════════════════
+# Tab 5: 품목 코드 탐색 (★ 신규)
+# ═══════════════════════════════════════════
+with tab5:
+    st.subheader("🔎 ECOS 품목 코드 탐색기")
+    st.caption(
+        "한국은행 ECOS API의 **실제 품목 코드**를 조회합니다. "
+        "`INFO-200 데이터 없음` 에러가 나면 이 탭에서 실제 코드를 찾아 "
+        "'설비별 PPI 조회' 또는 '수동 환산'에서 사용하세요."
+    )
+
+    if use_demo:
+        st.warning("⚠️ 이 탭은 LIVE 모드(ECOS 실제 API)에서만 동작합니다. 사이드바에서 LIVE 모드로 전환하세요.")
+    elif not os.getenv("ECOS_API_KEY"):
+        st.error("⚠️ ECOS API Key를 먼저 입력해 주세요.")
+    else:
+        col_s1, col_s2 = st.columns([3, 1])
+        with col_s1:
+            keyword = st.text_input(
+                "🔍 품목명 검색 (한글)",
+                placeholder="예: 철강, 기계, 변압기, 시멘트, 케이블, 펌프 ...",
+                help="비워두면 전체 목록이 나옵니다.",
+            )
+        with col_s2:
+            stat_code = st.text_input(
+                "통계표 코드",
+                value="404Y014",
+                help="404Y014 = 생산자물가지수(품목별)",
+            )
+
+        if st.button("🔎 검색", type="primary", key="tab5_search"):
+            try:
+                with st.spinner("ECOS에서 품목 목록 조회 중..."):
+                    client = ECOSClient()
+                    if keyword.strip():
+                        df_items = client.search_items(keyword.strip(), stat_code)
+                    else:
+                        df_items = client.list_items(stat_code)
+
+                st.session_state["ecos_items_df"] = df_items
+                st.success(f"✅ {len(df_items)}개 품목을 찾았습니다.")
+            except Exception as e:
+                st.error(f"❌ 조회 실패: {e}")
+
+        # 결과 테이블 렌더링
+        if "ecos_items_df" in st.session_state:
+            df_items = st.session_state["ecos_items_df"]
+
+            if len(df_items) == 0:
+                st.info("검색 결과 없음. 다른 키워드로 시도해보세요.")
+            else:
+                # 주요 컬럼만 먼저 표시
+                display_cols = ["ITEM_CODE", "ITEM_NAME"]
+                for extra in ["ITEM_LEVEL", "P_ITEM_CODE", "CYCLE", "START_TIME", "END_TIME", "WGT"]:
+                    if extra in df_items.columns:
+                        display_cols.append(extra)
+
+                st.dataframe(
+                    df_items[display_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    height=400,
+                )
+
+                # CSV 다운로드
+                csv_data = df_items.to_csv(index=False).encode("utf-8-sig")
+                st.download_button(
+                    "📥 전체 목록 CSV 다운로드",
+                    csv_data,
+                    f"ECOS_품목목록_{stat_code}.csv",
+                    "text/csv",
+                )
+
+                # 선택한 품목의 데이터 유효성 확인
+                st.divider()
+                st.markdown("### 🧪 선택한 품목의 데이터 유효성 확인")
+                st.caption("찾은 코드가 실제로 데이터를 반환하는지 바로 테스트")
+
+                col_t1, col_t2, col_t3 = st.columns([2, 1, 1])
+                with col_t1:
+                    test_code = st.text_input(
+                        "확인할 ITEM_CODE",
+                        value=str(df_items["ITEM_CODE"].iloc[0]) if "ITEM_CODE" in df_items.columns else "",
+                        key="test_code",
+                    )
+                with col_t2:
+                    test_period = st.text_input("테스트 시점 (YYYYMM)", value="202601", key="test_period")
+                with col_t3:
+                    st.markdown("&nbsp;")  # spacer
+                    test_btn = st.button("✅ 테스트", key="tab5_test")
+
+                if test_btn and test_code:
+                    try:
+                        client = ECOSClient()
+                        value = client.get_ppi_at(test_code.strip(), test_period.strip())
+                        st.success(f"✅ 정상 — `{test_code}` / {test_period} → PPI = **{value:.2f}**")
+                    except Exception as e:
+                        st.error(f"❌ 실패: {e}")
+
+        # 자주 쓰는 통계표 코드 안내
+        with st.expander("💡 자주 쓰는 통계표 코드"):
+            st.markdown("""
+            | 통계표 코드 | 설명 |
+            |-------------|------|
+            | `404Y014` | 생산자물가지수 (품목별, 2020=100) ⭐ |
+            | `404Y015` | 생산자물가지수 (산업별) |
+            | `731Y001` | 원달러 환율 (매매기준율) |
+            | `200Y001` | 국내총생산(GDP) |
+            | `901Y009` | 소비자물가지수(CPI) |
+
+            - `P_ITEM_CODE`: 상위 품목 코드 (계층 구조 파악용)
+            - `ITEM_LEVEL`: 계층 레벨 (1=대분류, 2=중분류, 3=소분류 …)
+            - `CYCLE`: 주기 (M=월, Q=분기, A=연)
+            """)
 
 
 # ═══════════════════════════════════════════
