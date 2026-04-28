@@ -244,7 +244,7 @@ def _extract_json_from_text(text: str) -> dict:
     return json.loads(text)
 
 
-def parse_query_gemini(user_query: str, model: str = "gemini-2.0-flash") -> dict:
+def parse_query_gemini(user_query: str, model: str = "gemini-2.5-flash") -> dict:
     if not HAS_GEMINI:
         raise RuntimeError("google-genai 패키지가 설치되지 않았습니다.")
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -267,7 +267,7 @@ def parse_query_gemini(user_query: str, model: str = "gemini-2.0-flash") -> dict
 
 
 def generate_report_gemini(parsed, base_ppi, target_ppi, item_info,
-                            model: str = "gemini-2.0-flash") -> str:
+                            model: str = "gemini-2.5-flash") -> str:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY가 설정되지 않았습니다.")
@@ -362,7 +362,7 @@ def run_ppi_agent(
     use_demo: bool = False,
     llm_provider: str = "auto",
     openai_model: str = "gpt-4o-mini",
-    gemini_model: str = "gemini-2.0-flash",
+    gemini_model: str = "gemini-2.5-flash",
     override_code: Optional[str] = None,
 ) -> dict:
     """
@@ -527,7 +527,7 @@ def explain_price_change_gemini(
     base_period: str,
     target_period: str,
     factor: float,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-2.5-flash",
 ) -> str:
     """
     PPI 시계열과 변동 폭을 바탕으로 Gemini가 '왜 올랐/내렸는지' 거시경제 맥락으로 해설.
@@ -598,7 +598,7 @@ def explain_multi_comparison_gemini(
     items_info: list,
     base_period: str,
     target_period: str,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-2.5-flash",
 ) -> str:
     """
     다중 설비 비교 결과를 Gemini가 해설 — 왜 품목별로 다르게 움직였는지.

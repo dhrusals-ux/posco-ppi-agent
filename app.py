@@ -110,6 +110,14 @@ with st.sidebar:
             if gk:
                 os.environ["GEMINI_API_KEY"] = gk.strip().strip('"').strip("'")
             llm_provider = "gemini"
+            # 🆕 Gemini 모델 선택 (신규 API 차단 대응)
+            gemini_model_choice = st.selectbox(
+                "Gemini 모델",
+                ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-flash-latest", "gemini-2.0-flash"],
+                index=0,
+                help="Google이 특정 모델을 차단할 경우 여기서 다른 모델로 전환하세요.",
+            )
+            os.environ["GEMINI_MODEL"] = gemini_model_choice
         elif llm_choice.startswith("💰"):
             try:
                 default_oai = st.secrets["OPENAI_API_KEY"]
@@ -318,6 +326,7 @@ with tab_ai:
                     result = run_ppi_agent(
                         user_query, use_demo=use_demo, llm_provider=llm_provider,
                         override_code=(override_code.strip() or None),
+                        gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
                     )
 
                     # 데이터 소스
@@ -503,6 +512,7 @@ with tab_ai:
                                         base_period=parsed["base_period"],
                                         target_period=parsed["target_period"],
                                         factor=factor,
+                                        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
                                     )
                                 st.markdown(
                                     f"<div style='background:linear-gradient(135deg,#f8fbff,#eef4ff);"
@@ -835,6 +845,7 @@ with tab_multi:
                             items_info=st.session_state["multi_items_info"],
                             base_period=s_m,
                             target_period=e_m,
+                            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
                         )
                     st.markdown(
                         f"<div style='background:linear-gradient(135deg,#fff9f0,#fef3e2);"
