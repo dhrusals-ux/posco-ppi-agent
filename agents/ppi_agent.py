@@ -471,6 +471,52 @@ def run_ppi_agent(
 #  🆕 PPI 상승/하락 원인 해설 (Gemini)
 # =========================================================
 
+def _call_gemini_with_retry(client, model, contents, config,
+                             fallback_models=None, max_retries=3, base_delay=2.0):
+    """
+    Gemini 호출 시 503/429/일시적 오류에 대해 지수 백오프 재시도.
+    기본 모델이 계속 실패하면 fallback_models 순서대로 자동 전환.
+    """
+    import time
+
+    candidates = [model] + (fallback_models or [])
+    last_err = None
+
+    for m_idx, m in enumerate(candidates):
+        for attempt in range(max_retries):
+            try:
+                return client.models.generate_content(
+                    model=m,
+                    contents=contents,
+                    config=config,
+                )
+            except Exception as e:
+                err_str = str(e)
+                last_err = e
+                # 503/429/UNAVAILABLE/RESOURCE_EXHAUSTED → 재시도 가치 있음
+                transient = any(k in err_str for k in [
+                    "503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED",
+                    "overloaded", "high demand", "rate limit"
+                ])
+                if not transient:
+                    # 다른 모델로 폴백 시도
+                    break
+                if attempt < max_retries - 1:
+                    # 지수 백오프: 2s, 4s, 8s
+                    time.sleep(base_delay * (2 ** attempt))
+                    continue
+        # 이 모델로는 재시도 끝 → 다음 폴백 모델로
+        if m_idx < len(candidates) - 1:
+            continue
+
+    # 전부 실패
+    raise RuntimeError(
+        f"Gemini 호출이 연속 실패했습니다 (모델: {candidates}). "
+        f"Google 서버가 혼잡한 상태일 수 있으니 1~2분 후 다시 시도하세요.\n"
+        f"원본 오류: {last_err}"
+    )
+
+
 def _summarize_ppi_series(df) -> str:
     """PPI 시계열 DataFrame을 Gemini에 전달할 간결한 텍스트로 요약."""
     import pandas as pd
@@ -583,13 +629,15 @@ def explain_price_change_gemini(
 """
 
     client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
+    response = _call_gemini_with_retry(
+        client,
         model=model,
         contents=user,
         config=genai_types.GenerateContentConfig(
             system_instruction=system,
             temperature=0.4,
         ),
+        fallback_models=["gemini-flash-latest", "gemini-2.5-pro"],
     )
     return (response.text or "").strip()
 
@@ -656,12 +704,14 @@ def explain_multi_comparison_gemini(
 """
 
     client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
+    response = _call_gemini_with_retry(
+        client,
         model=model,
         contents=user,
         config=genai_types.GenerateContentConfig(
             system_instruction=system,
             temperature=0.4,
         ),
+        fallback_models=["gemini-flash-latest", "gemini-2.5-pro"],
     )
     return (response.text or "").strip()

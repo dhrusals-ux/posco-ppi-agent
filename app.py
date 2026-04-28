@@ -504,7 +504,7 @@ with tab_ai:
                         else:
                             try:
                                 from agents.ppi_agent import explain_price_change_gemini
-                                with st.spinner("Gemini가 거시경제 맥락을 분석 중입니다... (10~20초)"):
+                                with st.spinner("Gemini가 거시경제 맥락을 분석 중입니다... (10~30초, 서버 혼잡 시 자동 재시도)"):
                                     explanation = explain_price_change_gemini(
                                         item_name=result["item_info"].get("name", ""),
                                         item_code=parsed["recommended_code"],
@@ -521,7 +521,24 @@ with tab_ai:
                                     unsafe_allow_html=True,
                                 )
                             except Exception as e:
-                                st.error(f"원인 분석 실패: {e}")
+                                err_str = str(e)
+                                if any(k in err_str for k in ["503", "UNAVAILABLE", "overloaded", "high demand"]):
+                                    st.warning(
+                                        "⏳ Google Gemini 서버가 현재 혼잡합니다. "
+                                        "**1~2분 후 다시 눌러주세요.** "
+                                        "또는 사이드바에서 `gemini-flash-latest` / `gemini-2.5-pro` 로 전환하면 해결되기도 합니다."
+                                    )
+                                elif "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                                    st.warning(
+                                        "🚦 무료 티어 분당 요청 한도 초과입니다. **30초~1분 후 재시도**하세요."
+                                    )
+                                elif "404" in err_str or "not available" in err_str.lower():
+                                    st.error(
+                                        f"❌ 모델을 찾을 수 없습니다: {err_str}\n\n"
+                                        "→ 사이드바에서 **다른 Gemini 모델**로 전환해주세요."
+                                    )
+                                else:
+                                    st.error(f"원인 분석 실패: {err_str}")
 
                     with st.expander("🔧 파싱 상세"):
                         st.json(parsed)
@@ -840,7 +857,7 @@ with tab_multi:
                 try:
                     from agents.ppi_agent import explain_multi_comparison_gemini
                     s_m, e_m = st.session_state.get("multi_period", (start_m, end_m))
-                    with st.spinner("Gemini가 품목 간 차이를 분석 중입니다... (15~25초)"):
+                    with st.spinner("Gemini가 품목 간 차이를 분석 중입니다... (15~40초, 서버 혼잡 시 자동 재시도)"):
                         explanation = explain_multi_comparison_gemini(
                             items_info=st.session_state["multi_items_info"],
                             base_period=s_m,
@@ -854,7 +871,24 @@ with tab_multi:
                         unsafe_allow_html=True,
                     )
                 except Exception as e:
-                    st.error(f"비교 분석 실패: {e}")
+                    err_str = str(e)
+                    if any(k in err_str for k in ["503", "UNAVAILABLE", "overloaded", "high demand"]):
+                        st.warning(
+                            "⏳ Google Gemini 서버가 현재 혼잡합니다. "
+                            "**1~2분 후 다시 눌러주세요.** "
+                            "또는 사이드바에서 `gemini-flash-latest` / `gemini-2.5-pro` 로 전환하면 해결되기도 합니다."
+                        )
+                    elif "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        st.warning(
+                            "🚦 무료 티어 분당 요청 한도 초과입니다. **30초~1분 후 재시도**하세요."
+                        )
+                    elif "404" in err_str or "not available" in err_str.lower():
+                        st.error(
+                            f"❌ 모델을 찾을 수 없습니다: {err_str}\n\n"
+                            "→ 사이드바에서 **다른 Gemini 모델**로 전환해주세요."
+                        )
+                    else:
+                        st.error(f"비교 분석 실패: {err_str}")
 
 
 # ═══════════════════════════════════════════
