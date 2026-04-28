@@ -380,7 +380,26 @@ with tab2:
         selected_item = sub_items[sub_idx]
         active_code = selected_item["code"]
         active_name = selected_item["name"]
-        st.info(f"📌 선택: **{active_name}** | ECOS 코드: `{active_code}` | {selected_item['desc']}")
+
+        # ★ LIVE 모드: 자동 매칭으로 placeholder → 실제 코드 변환
+        if not use_demo and os.getenv("ECOS_API_KEY"):
+            try:
+                from utils.ecos_catalog import get_catalog, auto_match_code
+                catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+                if catalog is not None and len(catalog) > 0:
+                    query_text = f"{selected_item['name']} {selected_item.get('desc', '')}"
+                    best, _ = auto_match_code(query_text, catalog)
+                    if best and best["score"] >= 5.0:
+                        active_code = best["code"]
+                        st.success(
+                            f"🎯 자동 매칭: **{selected_item['name']}** → "
+                            f"ECOS `{best['code']}` ({best['name']}) | 점수 {best['score']:.1f}"
+                        )
+                        active_name = f"{selected_item['name']} ({best['name']})"
+            except Exception:
+                pass
+
+        st.info(f"📌 선택: **{active_name}** | 사용 코드: `{active_code}` | {selected_item['desc']}")
     else:
         col_m1, col_m2 = st.columns([1, 2])
         with col_m1:
@@ -499,12 +518,33 @@ with tab3:
                 fig = go.Figure()
                 colors = px.colors.qualitative.Set2
                 summary_data = []
+                skipped = []
                 progress = st.progress(0, text="데이터 조회 중...")
+
+                # ★ LIVE 모드면 ECOS 카탈로그를 한 번만 로드해 자동 매칭에 재사용
+                catalog = None
+                if not use_demo and os.getenv("ECOS_API_KEY"):
+                    try:
+                        from utils.ecos_catalog import get_catalog, auto_match_code
+                        catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+                    except Exception as e:
+                        st.warning(f"카탈로그 로드 실패 — 원본 코드로 조회 시도: {e}")
 
                 for idx, item_idx in enumerate(selected_indices):
                     item = all_items[item_idx]
+                    # ★ LIVE 모드: 실제 ECOS 코드로 자동 매칭
+                    actual_code = item["code"]
+                    matched_name = item["name"]
+                    if catalog is not None and len(catalog) > 0:
+                        # 품목명 + 설명 합쳐서 키워드 확보력 ↑
+                        query_text = f"{item['name']} {item.get('desc', '')}"
+                        best, _ = auto_match_code(query_text, catalog)
+                        if best and best["score"] >= 5.0:
+                            actual_code = best["code"]
+                            matched_name = f"{item['name']} → {best['name']}"
+
                     try:
-                        df = client.get_ppi(item["code"], start_m, end_m)
+                        df = client.get_ppi(actual_code, start_m, end_m)
                         df["TIME_DT"] = pd.to_datetime(df["TIME"], format="%Y%m")
 
                         y_vals = df["DATA_VALUE"].values
@@ -515,45 +555,59 @@ with tab3:
 
                         fig.add_trace(go.Scatter(
                             x=df["TIME_DT"], y=y_plot,
-                            mode="lines", name=item["name"],
+                            mode="lines", name=matched_name,
                             line=dict(color=colors[idx % len(colors)], width=2.2),
                         ))
                         change = (y_vals[-1] / y_vals[0] - 1) * 100
                         summary_data.append({
-                            "품목": item["name"],
+                            "품목(요청→실제)": matched_name,
+                            "ECOS 코드": actual_code,
                             "카테고리": item["major"],
                             "시작 PPI": round(float(y_vals[0]), 2),
                             "종료 PPI": round(float(y_vals[-1]), 2),
                             "변동률(%)": round(change, 2),
                         })
                     except Exception as e:
-                        st.warning(f"⚠️ {item['name']}: {e}")
+                        skipped.append({"name": item["name"], "code": actual_code, "err": str(e)})
                     progress.progress((idx + 1) / len(selected_indices),
                                       text=f"{idx + 1}/{len(selected_indices)} 완료")
 
                 progress.empty()
-                title = "📊 설비별 PPI 추이 비교"
-                title += " (시작점=100 정규화)" if normalize else " (원본 지수)"
-                if normalize:
-                    fig.add_hline(y=100, line_dash="dash", line_color="gray",
-                                  annotation_text="시작점")
-                fig.update_layout(
-                    title=title,
-                    xaxis_title="시점",
-                    yaxis_title="정규화 지수" if normalize else "PPI (2020=100)",
-                    height=550, hovermode="x unified",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-                )
-                st.plotly_chart(fig, use_container_width=True)
 
-                # 변동률 비교
-                if summary_data:
+                # 매칭/조회 실패 안내
+                if skipped:
+                    with st.expander(f"⚠️ 조회 실패 {len(skipped)}건 — 펼쳐서 확인"):
+                        for s in skipped:
+                            st.markdown(f"- **{s['name']}** (코드 `{s['code']}`)\n  - {s['err']}")
+                        st.info(
+                            "💡 **Tip**: 자동 매칭이 적합한 품목을 못 찾았을 수 있습니다. "
+                            "Tab 5에서 검색한 실제 코드를 Tab 2에서 개별 조회해 보세요."
+                        )
+
+                if not summary_data:
+                    st.error("❌ 모든 품목 조회 실패 — ECOS 키/기간을 확인하세요.")
+                else:
+                    title = "📊 설비별 PPI 추이 비교"
+                    title += " (시작점=100 정규화)" if normalize else " (원본 지수)"
+                    if normalize:
+                        fig.add_hline(y=100, line_dash="dash", line_color="gray",
+                                      annotation_text="시작점")
+                    fig.update_layout(
+                        title=title,
+                        xaxis_title="시점",
+                        yaxis_title="정규화 지수" if normalize else "PPI (2020=100)",
+                        height=550, hovermode="x unified",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # 변동률 비교
                     st.markdown("### 📊 기간 변동률 요약")
                     df_sum = pd.DataFrame(summary_data).sort_values("변동률(%)", ascending=False)
                     st.dataframe(df_sum, use_container_width=True, hide_index=True)
 
                     fig_bar = px.bar(
-                        df_sum, x="품목", y="변동률(%)",
+                        df_sum, x="품목(요청→실제)", y="변동률(%)",
                         color="변동률(%)", color_continuous_scale="RdYlGn_r",
                         title="💹 기간 누적 변동률 비교 (내림차순)",
                         text="변동률(%)",
@@ -567,8 +621,8 @@ with tab3:
                     bot = df_sum.iloc[-1]
                     st.markdown(f"""
                     #### 💡 분석 인사이트
-                    - 가장 큰 상승: **{top['품목']}** ({top['변동률(%)']:+.2f}%)
-                    - 가장 작은 상승: **{bot['품목']}** ({bot['변동률(%)']:+.2f}%)
+                    - 가장 큰 상승: **{top['품목(요청→실제)']}** ({top['변동률(%)']:+.2f}%)
+                    - 가장 작은 상승: **{bot['품목(요청→실제)']}** ({bot['변동률(%)']:+.2f}%)
                     - 품목 간 변동률 격차: **{top['변동률(%)'] - bot['변동률(%)']:.2f}%p**
                     - 👉 투자 의사결정 시 설비별 물가 민감도 차이를 감안해 예비비 배분 검토 필요
                     """)
