@@ -482,6 +482,37 @@ with tab_ai:
                     except Exception as e:
                         st.warning(f"차트 생성 실패: {e}")
 
+                    # ───────────────────────────────────────────
+                    # 🆕 상승 원인 분석 (Gemini)
+                    # ───────────────────────────────────────────
+                    st.markdown("---")
+                    st.markdown("### 📰 상승 원인 분석 (AI)")
+                    st.caption("Gemini가 PPI 추이와 거시경제 이벤트를 연결해 왜 움직였는지 해설합니다.")
+
+                    if st.button("🧠 Gemini로 원인 분석 실행", key="explain_btn", use_container_width=True):
+                        if not os.getenv("GEMINI_API_KEY", "").strip():
+                            st.warning("⚠️ Gemini API Key가 설정되지 않았습니다. 좌측 사이드바에서 입력하세요.")
+                        else:
+                            try:
+                                from agents.ppi_agent import explain_price_change_gemini
+                                with st.spinner("Gemini가 거시경제 맥락을 분석 중입니다... (10~20초)"):
+                                    explanation = explain_price_change_gemini(
+                                        item_name=result["item_info"].get("name", ""),
+                                        item_code=parsed["recommended_code"],
+                                        ppi_df=df_full.rename(columns={"TIME": "date", "DATA_VALUE": "value"}),
+                                        base_period=parsed["base_period"],
+                                        target_period=parsed["target_period"],
+                                        factor=factor,
+                                    )
+                                st.markdown(
+                                    f"<div style='background:linear-gradient(135deg,#f8fbff,#eef4ff);"
+                                    f"padding:1.5rem;border-radius:12px;border-left:4px solid #005EB8;"
+                                    f"margin-top:0.8rem'>{explanation}</div>",
+                                    unsafe_allow_html=True,
+                                )
+                            except Exception as e:
+                                st.error(f"원인 분석 실패: {e}")
+
                     with st.expander("🔧 파싱 상세"):
                         st.json(parsed)
 
@@ -766,8 +797,53 @@ with tab_multi:
                         f"다중설비_{start_m}_{end_m}.xlsx",
                         use_container_width=True,
                     )
+
+                    # 세션에 Gemini 분석용 데이터 저장
+                    st.session_state["multi_items_info"] = [
+                        {
+                            "name": row["품목"],
+                            "code": row["ECOS 코드"],
+                            "factor": row["종료 PPI"] / row["시작 PPI"] if row["시작 PPI"] else 1.0,
+                            "df": pd.DataFrame({
+                                "date": pd.to_datetime(all_series[row["품목"]].index, format="%Y%m"),
+                                "value": all_series[row["품목"]].values,
+                            }) if row["품목"] in all_series else None,
+                        }
+                        for _, row in df_sum.iterrows()
+                    ]
+                    st.session_state["multi_period"] = (start_m, end_m)
             except Exception as e:
                 st.error(f"오류: {e}")
+
+    # ───────────────────────────────────────────
+    # 🆕 AI 비교 분석 (Gemini) — Tab 3 하단
+    # ───────────────────────────────────────────
+    if "multi_items_info" in st.session_state and st.session_state["multi_items_info"]:
+        st.markdown("---")
+        st.markdown("### 📰 AI 비교 분석")
+        st.caption("Gemini가 품목별로 왜 다르게 움직였는지 거시·산업 맥락으로 해설합니다.")
+
+        if st.button("🧠 Gemini로 비교 분석 실행", key="multi_explain_btn", use_container_width=True):
+            if not os.getenv("GEMINI_API_KEY", "").strip():
+                st.warning("⚠️ Gemini API Key가 설정되지 않았습니다. 좌측 사이드바에서 입력하세요.")
+            else:
+                try:
+                    from agents.ppi_agent import explain_multi_comparison_gemini
+                    s_m, e_m = st.session_state.get("multi_period", (start_m, end_m))
+                    with st.spinner("Gemini가 품목 간 차이를 분석 중입니다... (15~25초)"):
+                        explanation = explain_multi_comparison_gemini(
+                            items_info=st.session_state["multi_items_info"],
+                            base_period=s_m,
+                            target_period=e_m,
+                        )
+                    st.markdown(
+                        f"<div style='background:linear-gradient(135deg,#fff9f0,#fef3e2);"
+                        f"padding:1.5rem;border-radius:12px;border-left:4px solid #F29F05;"
+                        f"margin-top:0.8rem'>{explanation}</div>",
+                        unsafe_allow_html=True,
+                    )
+                except Exception as e:
+                    st.error(f"비교 분석 실패: {e}")
 
 
 # ═══════════════════════════════════════════

@@ -465,3 +465,203 @@ def run_ppi_agent(
         "used_llm": used_llm,
         "used_openai": provider == "openai",  # 이전 버전 호환
     }
+
+
+# =========================================================
+#  🆕 PPI 상승/하락 원인 해설 (Gemini)
+# =========================================================
+
+def _summarize_ppi_series(df) -> str:
+    """PPI 시계열 DataFrame을 Gemini에 전달할 간결한 텍스트로 요약."""
+    import pandas as pd
+
+    if df is None or len(df) == 0:
+        return "(데이터 없음)"
+
+    # DataFrame 가정: 'date' 또는 index가 날짜, 'value' 컬럼에 PPI 값
+    try:
+        d = df.copy()
+        if "date" in d.columns:
+            d["date"] = pd.to_datetime(d["date"])
+            d = d.sort_values("date")
+        else:
+            d = d.sort_index()
+            d["date"] = pd.to_datetime(d.index)
+
+        value_col = "value" if "value" in d.columns else d.columns[0]
+
+        # 연도별 평균값
+        d["year"] = d["date"].dt.year
+        yearly = d.groupby("year")[value_col].mean().round(2)
+
+        # 전년 대비 변동률(%)
+        yoy = yearly.pct_change().mul(100).round(2)
+
+        lines = []
+        for y, v in yearly.items():
+            delta = yoy.get(y)
+            if pd.isna(delta):
+                lines.append(f"- {int(y)}년 평균: {v}")
+            else:
+                arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "·")
+                lines.append(f"- {int(y)}년 평균: {v} (YoY {arrow}{abs(delta)}%)")
+
+        # 주요 급등/급락 구간(연간 |변동률| >= 5%) 강조
+        big = yoy[yoy.abs() >= 5].dropna()
+        if len(big) > 0:
+            lines.append("")
+            lines.append("[주요 변동 연도]")
+            for y, delta in big.items():
+                arrow = "급등 ▲" if delta > 0 else "급락 ▼"
+                lines.append(f"- {int(y)}년: {arrow} {delta:+.2f}%")
+
+        return "\n".join(lines)
+    except Exception as e:
+        return f"(요약 실패: {e})"
+
+
+def explain_price_change_gemini(
+    item_name: str,
+    item_code: str,
+    ppi_df,
+    base_period: str,
+    target_period: str,
+    factor: float,
+    model: str = "gemini-2.0-flash",
+) -> str:
+    """
+    PPI 시계열과 변동 폭을 바탕으로 Gemini가 '왜 올랐/내렸는지' 거시경제 맥락으로 해설.
+    반환: 마크다운 문자열
+    """
+    if not HAS_GEMINI:
+        raise RuntimeError("google-genai 패키지가 설치되지 않았습니다.")
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY가 설정되지 않았습니다.")
+
+    series_text = _summarize_ppi_series(ppi_df)
+    change_pct = (factor - 1.0) * 100
+
+    system = (
+        "너는 한국 산업·거시경제에 밝은 시니어 애널리스트다. "
+        "한국은행 ECOS 생산자물가지수(PPI) 시계열을 바탕으로, "
+        "특정 품목의 가격 변동 원인을 3~5가지 요인으로 구조화해 설명한다. "
+        "반드시 한국어 마크다운으로 답하고, 실제 발생한 거시경제 이벤트"
+        "(코로나19 팬데믹 2020, 글로벌 공급망 대란 2021~2022, 러시아-우크라이나 전쟁·원자재 급등 2022, "
+        "미 연준 금리 인상 2022~2023, 원/달러 환율 변동, 중국 경기 둔화, 에너지 가격, 철광석·원료탄 가격, "
+        "국내 건설경기·설비투자 사이클 등)과 연결해라. "
+        "추측은 최소화하고, 데이터에서 보이는 구간을 먼저 지목한 뒤 원인을 해석하라. "
+        "마지막에는 '포스코 투자엔지니어링 관점의 시사점'을 2~3줄로 덧붙여라."
+    )
+
+    user = f"""
+## 분석 대상
+- 품목명: **{item_name}**
+- ECOS 코드: `{item_code}`
+- 기준 시점: {base_period}
+- 목표 시점: {target_period}
+- 누적 변동률: **{change_pct:+.2f}%** (보정계수 {factor:.4f})
+
+## 연도별 PPI 요약
+{series_text}
+
+## 요청
+1. 위 기간의 PPI 추이를 3~5개 **주요 구간**으로 나누어 해설해줘.
+2. 각 구간마다 **당시 거시경제 이벤트**(실제 발생한 것만)와 연결해서 왜 움직였는지 설명.
+3. **포스코 투자엔지니어링 실무 시사점**(설비투자·원가 보정·리스크)을 마지막에 2~3줄.
+
+출력 형식:
+### 📈 PPI 변동 요약
+(한두 문장)
+
+### 🔎 구간별 원인 분석
+- **YYYY~YYYY년 (±X%)** — 원인 설명
+- ...
+
+### 🎯 포스코 투자엔지니어링 시사점
+- ...
+"""
+
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=model,
+        contents=user,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.4,
+        ),
+    )
+    return (response.text or "").strip()
+
+
+def explain_multi_comparison_gemini(
+    items_info: list,
+    base_period: str,
+    target_period: str,
+    model: str = "gemini-2.0-flash",
+) -> str:
+    """
+    다중 설비 비교 결과를 Gemini가 해설 — 왜 품목별로 다르게 움직였는지.
+    items_info: [{"name": ..., "code": ..., "factor": ..., "df": ...}, ...]
+    """
+    if not HAS_GEMINI:
+        raise RuntimeError("google-genai 패키지가 설치되지 않았습니다.")
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY가 설정되지 않았습니다.")
+
+    blocks = []
+    for it in items_info:
+        name = it.get("name", "?")
+        code = it.get("code", "?")
+        factor = it.get("factor", 1.0)
+        change = (factor - 1.0) * 100
+        summary = _summarize_ppi_series(it.get("df"))
+        blocks.append(
+            f"### [{name}] (코드 {code}) — 변동 {change:+.2f}%\n{summary}"
+        )
+    data_block = "\n\n".join(blocks)
+
+    system = (
+        "너는 한국 산업·거시경제 시니어 애널리스트다. "
+        "여러 품목의 생산자물가지수(PPI) 변동을 비교 분석하며, "
+        "같은 기간에도 품목별로 다르게 움직인 이유를 거시·산업 요인으로 설명한다. "
+        "반드시 한국어 마크다운으로 답하고, 실제 발생 이벤트(팬데믹·원자재·환율·금리·산업 사이클 등)와 연결하라. "
+        "마지막에 '포스코 투자엔지니어링 관점의 시사점'을 2~3줄 덧붙여라."
+    )
+
+    user = f"""
+## 비교 분석 대상
+- 기준 시점: {base_period}
+- 목표 시점: {target_period}
+
+## 품목별 PPI 요약
+{data_block}
+
+## 요청
+1. 같은 기간임에도 품목별 변동률이 다른 **핵심 이유 3~5가지**를 짚어줘.
+2. 가장 많이 오른 품목과 가장 덜 오른(또는 내린) 품목을 대조해서 설명.
+3. 각 품목에 영향을 미친 **거시경제·원자재 이벤트**를 구체적으로 연결.
+4. 마지막에 **포스코 투자엔지니어링 시사점**(설비 Mix 전략·원가 리스크 분산).
+
+출력 형식:
+### 📊 비교 요약
+(한두 문장)
+
+### 🔍 품목별 차별화 원인
+- **품목명 (±X%)** — ...
+
+### 🎯 포스코 투자엔지니어링 시사점
+- ...
+"""
+
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=model,
+        contents=user,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.4,
+        ),
+    )
+    return (response.text or "").strip()
