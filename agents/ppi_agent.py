@@ -715,3 +715,164 @@ def explain_multi_comparison_gemini(
         fallback_models=["gemini-flash-latest", "gemini-2.5-pro"],
     )
     return (response.text or "").strip()
+
+
+# =========================================================
+#  🆕 v10 히트맵 강화팩 — AI 자연어 질의 + 히트맵 인사이트 리포트
+# =========================================================
+
+def explain_heatmap_query_gemini(
+    user_question: str,
+    heatmap_df,        # DataFrame: index=품목, columns=연도, values=YoY(%)
+    corr_df=None,      # DataFrame: 상관계수 매트릭스 (옵션)
+    model: str = "gemini-2.5-flash",
+) -> str:
+    """
+    히트맵 데이터를 JSON으로 압축해 Gemini에 전달하고,
+    사용자의 자연어 질문에 대해 데이터 기반 답변을 생성.
+    예: "2020년 이후 변동성이 가장 낮은 기계설비 5개는?"
+    """
+    if not HAS_GEMINI:
+        raise RuntimeError("google-genai 패키지가 설치되지 않았습니다.")
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY가 설정되지 않았습니다.")
+
+    # 데이터를 Gemini에 전달할 수 있게 요약
+    try:
+        hm_text = heatmap_df.round(2).to_csv()
+    except Exception:
+        hm_text = str(heatmap_df)
+
+    corr_text = ""
+    if corr_df is not None and len(corr_df) > 0:
+        try:
+            corr_text = "\n\n## 품목 간 상관계수 매트릭스\n" + corr_df.round(3).to_csv()
+        except Exception:
+            pass
+
+    # 기초 통계 요약 (변동성·평균변동률 등 Gemini가 놓치지 않도록 미리 계산)
+    stat_text = ""
+    try:
+        import pandas as pd
+        stats = pd.DataFrame({
+            "평균변동률(%)": heatmap_df.mean(axis=1).round(2),
+            "변동성(표준편차)": heatmap_df.std(axis=1).round(2),
+            "최대급등(%)": heatmap_df.max(axis=1).round(2),
+            "최대급락(%)": heatmap_df.min(axis=1).round(2),
+        })
+        stat_text = "\n\n## 품목별 기초 통계 (분석 기간 전체)\n" + stats.to_csv()
+    except Exception:
+        pass
+
+    system = (
+        "너는 한국 산업·거시경제에 밝은 데이터 분석가다. "
+        "사용자가 제공한 생산자물가지수(PPI) 히트맵 데이터를 근거로만 답하고, "
+        "데이터에 없는 숫자는 추측하지 마라. "
+        "반드시 한국어 마크다운으로 답하고, 표·순위·근거 숫자를 함께 제시하라. "
+        "질문이 모호하면 우선 합리적으로 해석한 뒤 그 해석을 먼저 명시한다."
+    )
+
+    user = f"""
+## 사용자 질문
+{user_question}
+
+## 히트맵 데이터 (행=품목, 열=연도, 값=YoY 변동률 %)
+{hm_text}
+{stat_text}
+{corr_text}
+
+## 답변 요건
+1. 데이터에 근거해서 답해라. 데이터에 없는 내용은 "데이터에서 확인 불가"라고 써라.
+2. 상위/하위 랭킹을 물으면 **표 형태**로 제시하고 근거 수치(평균·표준편차·최대값 등)를 같이 보여라.
+3. 마지막에 한두 줄로 **포스코 투자엔지니어링 관점 시사점**을 덧붙여라.
+"""
+
+    client = genai.Client(api_key=api_key)
+    response = _call_gemini_with_retry(
+        client,
+        model=model,
+        contents=user,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.3,
+        ),
+        fallback_models=["gemini-flash-latest", "gemini-2.5-pro"],
+    )
+    return (response.text or "").strip()
+
+
+def generate_heatmap_report_gemini(
+    heatmap_df,
+    corr_df=None,
+    model: str = "gemini-2.5-flash",
+) -> str:
+    """
+    히트맵 전체를 보고 '임원 보고용 요약 리포트' 자동 생성.
+    Top 급등/급락/변동성/동조쌍 + 포스코 투자엔지니어링 시사점.
+    """
+    if not HAS_GEMINI:
+        raise RuntimeError("google-genai 패키지가 설치되지 않았습니다.")
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY가 설정되지 않았습니다.")
+
+    try:
+        hm_text = heatmap_df.round(2).to_csv()
+    except Exception:
+        hm_text = str(heatmap_df)
+
+    corr_text = ""
+    if corr_df is not None and len(corr_df) > 0:
+        try:
+            corr_text = "\n\n## 품목 간 상관계수\n" + corr_df.round(3).to_csv()
+        except Exception:
+            pass
+
+    system = (
+        "너는 포스코 투자엔지니어링 실무를 돕는 시니어 애널리스트다. "
+        "제공된 생산자물가지수(PPI) 히트맵 데이터를 보고 임원 보고용 요약 리포트를 작성한다. "
+        "반드시 한국어 마크다운, 데이터 근거 우선, 수치를 표로 제시한다."
+    )
+
+    user = f"""
+## 히트맵 데이터 (행=품목, 열=연도, 값=YoY %)
+{hm_text}
+{corr_text}
+
+## 작성 요건
+다음 구조로 작성:
+
+### 📊 한눈에 보기
+(3~4줄 요약)
+
+### 🔴 최대 급등 Top 3
+| 순위 | 품목 | 연도 | YoY(%) | 해석 |
+
+### 🟢 최대 급락 Top 3
+(동일 포맷)
+
+### 📈 변동성 Top 3 (가장 불확실한 품목)
+(품목별 연도별 표준편차 기준)
+
+### 🔗 가장 동조하는 품목 쌍 Top 3
+(상관계수 근거)
+
+### 🎯 포스코 투자엔지니어링 시사점
+- 투자 시점 전략: ...
+- 원가 리스크 관리: ...
+- 포트폴리오 분산: ...
+"""
+
+    client = genai.Client(api_key=api_key)
+    response = _call_gemini_with_retry(
+        client,
+        model=model,
+        contents=user,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.4,
+        ),
+        fallback_models=["gemini-flash-latest", "gemini-2.5-pro"],
+    )
+    return (response.text or "").strip()

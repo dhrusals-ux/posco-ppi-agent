@@ -1269,66 +1269,445 @@ with tab_port:
 
 
 # ═══════════════════════════════════════════
-# Tab 6: 히트맵 & 상관관계
+# Tab 6: 히트맵 & 상관관계 (v10 강화팩)
 # ═══════════════════════════════════════════
 with tab_heat:
-    st.markdown(section_title("🗺️ 다품목 × 연도 히트맵 + 상관관계 매트릭스"), unsafe_allow_html=True)
-    st.caption("여러 품목의 연도별 변동률을 매트릭스로, 품목 간 동조 패턴을 상관계수로 표현")
+    st.markdown(section_title("🗺️ 원가 인텔리전스 히트맵"), unsafe_allow_html=True)
+    st.caption("다중 뷰 · 정렬 · 드릴다운 · 자동 인사이트 · AI 자연어 질의 · 자동 리포트")
 
     if "multi_series" not in st.session_state or not st.session_state["multi_series"]:
         st.info(
             "👉 **Tab 3 (다중 설비 비교)** 에서 먼저 품목들을 선택하고 "
-            "비교 차트를 생성하세요. 그 데이터를 여기서 히트맵으로 볼 수 있습니다."
+            "비교 차트를 생성하세요. 그 데이터를 여기서 히트맵으로 활용합니다."
         )
     else:
         series_dict = st.session_state["multi_series"]
 
-        # 연도별 평균 PPI 매트릭스
-        rows = []
+        # ─── 1) 원본 월별 데이터프레임 (모든 계산의 기반)
+        monthly_rows = []
         for name, s in series_dict.items():
-            df = pd.DataFrame({"TIME": s.index, "PPI": s.values})
-            df["YEAR"] = df["TIME"].astype(str).str[:4].astype(int)
-            yr = df.groupby("YEAR")["PPI"].mean()
-            yoy = yr.pct_change() * 100
-            for year, val in yoy.items():
-                if not pd.isna(val):
-                    rows.append({"품목": name, "연도": int(year), "YoY(%)": round(float(val), 2)})
-        hm = pd.DataFrame(rows)
+            for ym, val in s.items():
+                try:
+                    monthly_rows.append({
+                        "품목": name,
+                        "YM": str(ym),
+                        "YEAR": int(str(ym)[:4]),
+                        "MONTH": int(str(ym)[4:6]) if len(str(ym)) >= 6 else 1,
+                        "PPI": float(val),
+                    })
+                except Exception:
+                    continue
+        df_month = pd.DataFrame(monthly_rows)
+        # 사실상 series_dict가 있으면 df_month는 비어있지 않음 — 방어 차원으로 체크만
+        if df_month.empty:
+            st.warning("데이터 부족 — Tab 3에서 먼저 비교 차트를 생성해주세요.")
+            df_month = pd.DataFrame([{"품목": "", "YM": "202001", "YEAR": 2020, "MONTH": 1, "PPI": 100.0}])
 
-        if len(hm) == 0:
-            st.warning("히트맵 데이터 부족")
-        else:
-            # 피벗해서 히트맵
-            pivot = hm.pivot(index="품목", columns="연도", values="YoY(%)")
-            fig_h = px.imshow(
-                pivot, color_continuous_scale=[[0, POSCO_COLORS["success"]],
-                                                 [0.5, "#F8FAFC"],
-                                                 [1, POSCO_COLORS["danger"]]],
-                aspect="auto", text_auto=".1f",
-                title="🔥 품목별 연도 변동률 히트맵 (YoY %)",
-                color_continuous_midpoint=0,
+        # ─── 2) 연도별 평균 + YoY / 누적 / Z-score / 절대지수 계산
+        yearly = df_month.groupby(["품목", "YEAR"])["PPI"].mean().reset_index()
+
+        # YoY
+        yearly["YoY(%)"] = yearly.groupby("품목")["PPI"].pct_change() * 100
+
+        # 누적 (품목별 첫 연도 대비)
+        yearly["기준PPI"] = yearly.groupby("품목")["PPI"].transform("first")
+        yearly["누적(%)"] = (yearly["PPI"] / yearly["기준PPI"] - 1) * 100
+
+        # Z-score (YoY 기준)
+        def _zscore(g):
+            if g.std() == 0 or pd.isna(g.std()):
+                return g * 0
+            return (g - g.mean()) / g.std()
+        yearly["Z-score"] = yearly.groupby("품목")["YoY(%)"].transform(_zscore)
+
+        # ─── 3) Tier 1-① 다중 뷰 토글
+        st.markdown("#### 🎛️ 뷰 & 필터")
+        vc1, vc2, vc3, vc4 = st.columns([1.2, 1.2, 1.2, 1.4])
+        with vc1:
+            view_mode = st.radio(
+                "뷰 모드",
+                ["YoY (%)", "누적 (%)", "Z-score", "절대지수"],
+                horizontal=False, key="heat_view",
+                help="같은 데이터를 4가지 관점으로 봅니다.",
             )
-            fig_h.update_layout(height=max(300, 50 * len(pivot)))
-            st.plotly_chart(fig_h, use_container_width=True)
-
-            # 상관계수 매트릭스
-            st.markdown(section_title("🔗 품목 간 가격 동조 상관계수"), unsafe_allow_html=True)
-            df_wide = pd.DataFrame(series_dict)
-            df_wide = df_wide.apply(pd.to_numeric, errors="coerce")
-            corr = df_wide.corr()
-
-            fig_c = px.imshow(
-                corr, color_continuous_scale="RdBu_r",
-                zmin=-1, zmax=1, text_auto=".2f",
-                title="상관계수 매트릭스 (1에 가까울수록 동조)",
+        with vc2:
+            sort_mode = st.selectbox(
+                "정렬 기준",
+                ["품목명(가나다)", "누적 변동률 ↓", "평균 YoY ↓", "변동성(σ) ↓", "최근연도 YoY ↓"],
+                key="heat_sort",
             )
-            fig_c.update_layout(height=max(350, 50 * len(corr)))
-            st.plotly_chart(fig_c, use_container_width=True)
-
-            st.caption(
-                "💡 해석: 상관계수가 높은 품목끼리는 가격이 같은 방향으로 움직입니다. "
-                "포트폴리오 구성 시 상관이 낮은 품목을 섞으면 전체 변동 리스크가 줄어듭니다."
+        with vc3:
+            threshold_pct = st.slider(
+                "하이라이트 상/하위 %",
+                min_value=0, max_value=50, value=0, step=5,
+                help="0=전체 표시, 20=상위·하위 20% 외 셀은 흐리게",
+                key="heat_threshold",
             )
+        with vc4:
+            show_events = st.checkbox("📌 거시이벤트 이모지 주석", value=True, key="heat_events")
+            show_text = st.checkbox("셀 값 표시", value=True, key="heat_text")
+
+        # ─── 4) 뷰 모드별 pivot 만들기
+        value_col = {
+            "YoY (%)": "YoY(%)",
+            "누적 (%)": "누적(%)",
+            "Z-score": "Z-score",
+            "절대지수": "PPI",
+        }[view_mode]
+
+        pivot = yearly.pivot(index="품목", columns="YEAR", values=value_col)
+        pivot = pivot.dropna(how="all", axis=1)
+
+        # ─── 5) Tier 1-② 정렬 옵션
+        if sort_mode == "품목명(가나다)":
+            pivot = pivot.sort_index()
+        elif sort_mode == "누적 변동률 ↓":
+            cum_last = yearly.groupby("품목").apply(lambda g: g["누적(%)"].dropna().iloc[-1] if g["누적(%)"].dropna().size else 0)
+            pivot = pivot.reindex(cum_last.sort_values(ascending=False).index)
+        elif sort_mode == "평균 YoY ↓":
+            avg = pivot.mean(axis=1).sort_values(ascending=False)
+            pivot = pivot.reindex(avg.index)
+        elif sort_mode == "변동성(σ) ↓":
+            stdv = pivot.std(axis=1).sort_values(ascending=False)
+            pivot = pivot.reindex(stdv.index)
+        elif sort_mode == "최근연도 YoY ↓":
+            last_year = pivot.columns.max()
+            pivot = pivot.sort_values(by=last_year, ascending=False, na_position="last")
+
+        # ─── 6) Tier 1-④ 임계값 필터 (분위수 기반 마스킹)
+        pivot_display = pivot.copy()
+        if threshold_pct > 0 and view_mode != "절대지수":
+            q_low = pivot.stack().quantile(threshold_pct / 100)
+            q_high = pivot.stack().quantile(1 - threshold_pct / 100)
+            # 상·하위 % 벗어나는 것만 유지, 나머진 NaN
+            mask = (pivot_display < q_low) | (pivot_display > q_high)
+            pivot_display = pivot_display.where(mask, other=None)
+
+        # ─── 7) Tier 3-⑩ 연도 이벤트 주석
+        YEAR_EVENTS = {
+            2015: "🛢️", 2016: "", 2017: "", 2018: "🇨🇳", 2019: "",
+            2020: "🦠", 2021: "📦", 2022: "⚔️", 2023: "📈", 2024: "🤖", 2025: "", 2026: "",
+        }
+        x_labels = [
+            f"{int(y)}{' ' + YEAR_EVENTS.get(int(y), '') if show_events and YEAR_EVENTS.get(int(y)) else ''}"
+            for y in pivot_display.columns
+        ]
+
+        # ─── 8) 히트맵 렌더링
+        colorscale = (
+            [[0, POSCO_COLORS["success"]],
+             [0.5, "#F8FAFC"],
+             [1, POSCO_COLORS["danger"]]]
+            if view_mode != "절대지수"
+            else "Blues"
+        )
+        midpoint = 0 if view_mode != "절대지수" else None
+
+        fig_h = px.imshow(
+            pivot_display.values,
+            x=x_labels,
+            y=[str(i) for i in pivot_display.index],
+            color_continuous_scale=colorscale,
+            aspect="auto",
+            text_auto=".1f" if show_text else False,
+            title=f"🔥 품목 × 연도 히트맵 — {view_mode}"
+                  + (f" (상/하위 {threshold_pct}% 하이라이트)" if threshold_pct > 0 else ""),
+            color_continuous_midpoint=midpoint,
+        )
+        fig_h.update_layout(
+            height=max(360, 42 * len(pivot_display)),
+            xaxis_title="연도", yaxis_title="품목",
+        )
+        st.plotly_chart(fig_h, use_container_width=True)
+
+        if show_events:
+            st.caption("🦠 COVID · 📦 공급망 대란 · ⚔️ 러·우 전쟁 · 📈 연준 금리 · 🤖 AI CAPEX · 🛢️ 저유가 · 🇨🇳 미-중 무역")
+
+        # ─── 9) Tier 3-⑨ 자동 인사이트 Top 5
+        st.markdown("---")
+        st.markdown("#### 💡 자동 인사이트 Top 5")
+
+        yoy_pivot = yearly.pivot(index="품목", columns="YEAR", values="YoY(%)").dropna(how="all", axis=1)
+
+        # 급등/급락
+        stacked = yoy_pivot.stack()
+        top_up = stacked.nlargest(3)
+        top_dn = stacked.nsmallest(3)
+
+        # 변동성
+        vol = yoy_pivot.std(axis=1).sort_values(ascending=False).head(3)
+
+        # 상관계수
+        df_wide = pd.DataFrame(series_dict).apply(pd.to_numeric, errors="coerce")
+        corr = df_wide.corr()
+        corr_pairs = []
+        items_list = list(corr.columns)
+        for i in range(len(items_list)):
+            for j in range(i + 1, len(items_list)):
+                corr_pairs.append((items_list[i], items_list[j], corr.iloc[i, j]))
+        corr_pairs.sort(key=lambda x: -abs(x[2]) if not pd.isna(x[2]) else 0)
+        top_corr = corr_pairs[:3]
+
+        ic1, ic2 = st.columns(2)
+        with ic1:
+            st.markdown("**🔴 최대 급등 Top 3**")
+            for (item, year), v in top_up.items():
+                st.markdown(f"- **{item}** `{int(year)}년` → **+{v:.1f}%**")
+            st.markdown("**🟢 최대 급락 Top 3**")
+            for (item, year), v in top_dn.items():
+                st.markdown(f"- **{item}** `{int(year)}년` → **{v:.1f}%**")
+        with ic2:
+            st.markdown("**📊 변동성 Top 3 (YoY 표준편차)**")
+            for item, s in vol.items():
+                st.markdown(f"- **{item}** → σ = **{s:.2f}%**")
+            st.markdown("**🔗 가장 동조하는 품목 쌍 Top 3**")
+            for a, b, v in top_corr:
+                if pd.isna(v):
+                    continue
+                st.markdown(f"- **{a} ↔ {b}** → ρ = **{v:+.2f}**")
+
+        # ─── 10) Tier 1-③ 셀 드릴다운 + Gemini 원인 분석
+        st.markdown("---")
+        st.markdown("#### 🔍 셀 드릴다운 — 특정 품목·연도 심층 분석")
+
+        dc1, dc2, dc3 = st.columns([1.3, 1, 1])
+        with dc1:
+            drill_item = st.selectbox("품목 선택", list(pivot.index), key="drill_item")
+        with dc2:
+            drill_year = st.selectbox("연도 선택", list(pivot.columns), key="drill_year")
+        with dc3:
+            st.write("")
+            st.write("")
+            run_drill = st.button("📍 분석", key="drill_btn", use_container_width=True)
+
+        if run_drill or "drill_last" in st.session_state:
+            if run_drill:
+                st.session_state["drill_last"] = (drill_item, drill_year)
+            cur_item, cur_year = st.session_state["drill_last"]
+
+            sub = df_month[(df_month["품목"] == cur_item) & (df_month["YEAR"] == int(cur_year))]
+            if sub.empty:
+                st.warning("해당 데이터 없음")
+            else:
+                yoy_val = yoy_pivot.loc[cur_item, int(cur_year)] if int(cur_year) in yoy_pivot.columns else None
+                yoy_txt = f"{yoy_val:+.2f}%" if yoy_val is not None and not pd.isna(yoy_val) else "N/A"
+                st.markdown(
+                    f"**{cur_item}** · **{int(cur_year)}년** · YoY **{yoy_txt}** · "
+                    f"평균 PPI **{sub['PPI'].mean():.2f}**"
+                )
+
+                # 월별 미니 차트
+                sub = sub.sort_values("MONTH")
+                fig_mini = go.Figure()
+                fig_mini.add_trace(go.Scatter(
+                    x=sub["MONTH"], y=sub["PPI"], mode="lines+markers",
+                    line=dict(color=POSCO_COLORS["primary"], width=2.5),
+                    marker=dict(size=8),
+                    hovertemplate="%{x}월<br>PPI: %{y:.2f}<extra></extra>",
+                ))
+                fig_mini.update_layout(
+                    height=260, title=f"{int(cur_year)}년 월별 PPI 추이",
+                    xaxis=dict(tickmode="linear", dtick=1, title="월"),
+                    yaxis_title="PPI",
+                )
+                st.plotly_chart(fig_mini, use_container_width=True)
+
+                # Gemini 원인 분석 버튼 (기존 함수 재활용)
+                if st.button("🧠 이 구간 Gemini 원인 분석", key="drill_explain_btn", use_container_width=True):
+                    if not os.getenv("GEMINI_API_KEY", "").strip():
+                        st.warning("⚠️ Gemini API Key가 설정되지 않았습니다.")
+                    else:
+                        try:
+                            from agents.ppi_agent import explain_price_change_gemini
+                            item_series = series_dict[cur_item]
+                            df_item = pd.DataFrame({
+                                "date": pd.to_datetime(item_series.index, format="%Y%m"),
+                                "value": item_series.values,
+                            })
+                            factor_d = (sub["PPI"].iloc[-1] / sub["PPI"].iloc[0]) if len(sub) > 1 else 1.0
+                            with st.spinner("Gemini가 분석 중... (10~30초)"):
+                                explanation = explain_price_change_gemini(
+                                    item_name=cur_item,
+                                    item_code="(히트맵 드릴다운)",
+                                    ppi_df=df_item,
+                                    base_period=f"{int(cur_year)}01",
+                                    target_period=f"{int(cur_year)}12",
+                                    factor=factor_d,
+                                    model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                                )
+                            st.markdown(
+                                f"<div style='background:linear-gradient(135deg,#f8fbff,#eef4ff);"
+                                f"padding:1.2rem;border-radius:12px;border-left:4px solid #005EB8;"
+                                f"margin-top:0.6rem'>{explanation}</div>",
+                                unsafe_allow_html=True,
+                            )
+                        except Exception as e:
+                            st.error(f"분석 실패: {e}")
+
+        # ─── 11) #14 AI 자연어 질의 박스
+        st.markdown("---")
+        st.markdown("#### 🗣️ AI에게 데이터 질문하기")
+        st.caption("예: \"2020년 이후 변동성이 가장 낮은 품목 5개는?\" · \"2022년에 가장 많이 오른 품목 3개 이유는?\"")
+
+        # 예시 질문 버튼
+        eq1, eq2, eq3 = st.columns(3)
+        sample_queries = [
+            "2020년 이후 변동성이 가장 낮은 품목 5개를 알려줘",
+            "2022년에 가장 많이 오른 품목 3개와 그 이유는?",
+            "서로 가장 다르게 움직이는 품목 쌍을 찾아줘 (분산투자용)",
+        ]
+        if eq1.button("💡 " + sample_queries[0][:18] + "…", key="sq1", use_container_width=True):
+            st.session_state["heat_q"] = sample_queries[0]
+        if eq2.button("💡 " + sample_queries[1][:18] + "…", key="sq2", use_container_width=True):
+            st.session_state["heat_q"] = sample_queries[1]
+        if eq3.button("💡 " + sample_queries[2][:18] + "…", key="sq3", use_container_width=True):
+            st.session_state["heat_q"] = sample_queries[2]
+
+        user_q = st.text_area(
+            "질문 입력",
+            value=st.session_state.get("heat_q", ""),
+            height=80,
+            placeholder="히트맵 데이터에 대해 궁금한 것을 한국어로 질문해주세요.",
+            key="heat_q_input",
+        )
+
+        if st.button("🚀 AI에게 물어보기", type="primary", key="heat_ask_btn", use_container_width=True):
+            if not user_q.strip():
+                st.warning("질문을 입력해주세요.")
+            elif not os.getenv("GEMINI_API_KEY", "").strip():
+                st.warning("⚠️ Gemini API Key가 설정되지 않았습니다.")
+            else:
+                try:
+                    from agents.ppi_agent import explain_heatmap_query_gemini
+                    with st.spinner("Gemini가 히트맵 데이터를 분석 중... (10~30초)"):
+                        answer = explain_heatmap_query_gemini(
+                            user_question=user_q,
+                            heatmap_df=yoy_pivot,
+                            corr_df=corr,
+                            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                        )
+                    st.session_state["heat_last_answer"] = answer
+                except Exception as e:
+                    err_str = str(e)
+                    if any(k in err_str for k in ["503", "UNAVAILABLE", "overloaded"]):
+                        st.warning("⏳ Google Gemini 서버 혼잡. 1~2분 후 다시 시도하세요.")
+                    else:
+                        st.error(f"질의 실패: {err_str}")
+
+        if "heat_last_answer" in st.session_state:
+            st.markdown(
+                f"<div style='background:linear-gradient(135deg,#fff9f0,#fef3e2);"
+                f"padding:1.5rem;border-radius:12px;border-left:4px solid #F29F05;"
+                f"margin-top:0.8rem'>{st.session_state['heat_last_answer']}</div>",
+                unsafe_allow_html=True,
+            )
+
+        # ─── 12) Tier 3-⑪ 자동 리포트 생성 버튼
+        st.markdown("---")
+        st.markdown("#### 📄 임원 보고용 자동 리포트")
+        rc1, rc2 = st.columns(2)
+        with rc1:
+            if st.button("🧾 Gemini 요약 리포트 생성", key="heat_report_btn", use_container_width=True):
+                if not os.getenv("GEMINI_API_KEY", "").strip():
+                    st.warning("⚠️ Gemini API Key가 설정되지 않았습니다.")
+                else:
+                    try:
+                        from agents.ppi_agent import generate_heatmap_report_gemini
+                        with st.spinner("Gemini가 리포트 작성 중... (15~40초)"):
+                            rep = generate_heatmap_report_gemini(
+                                heatmap_df=yoy_pivot,
+                                corr_df=corr,
+                                model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+                            )
+                        st.session_state["heat_report"] = rep
+                    except Exception as e:
+                        st.error(f"리포트 생성 실패: {e}")
+        with rc2:
+            if "heat_report" in st.session_state and st.session_state["heat_report"]:
+                # 리포트를 PDF로 다운로드
+                try:
+                    pdf_bytes = generate_pdf_report(
+                        title="히트맵 자동 리포트 (Gemini)",
+                        summary={
+                            "분석 품목 수": str(len(pivot.index)),
+                            "분석 기간": f"{int(pivot.columns.min())}~{int(pivot.columns.max())}년",
+                        },
+                        body_text=st.session_state["heat_report"],
+                        table_df=yoy_pivot.round(2).reset_index(),
+                    )
+                    st.download_button(
+                        "📄 리포트 PDF 다운로드",
+                        pdf_bytes,
+                        f"히트맵리포트_{int(pivot.columns.min())}_{int(pivot.columns.max())}.pdf",
+                        "application/pdf",
+                        use_container_width=True,
+                        key="heat_pdf_dl",
+                    )
+                except Exception as e:
+                    st.caption(f"PDF 변환 실패: {e}")
+
+        if "heat_report" in st.session_state and st.session_state["heat_report"]:
+            st.markdown(
+                f"<div style='background:linear-gradient(135deg,#f0f9ff,#ecfeff);"
+                f"padding:1.5rem;border-radius:12px;border-left:4px solid #0891B2;"
+                f"margin-top:0.8rem'>{st.session_state['heat_report']}</div>",
+                unsafe_allow_html=True,
+            )
+
+        # ─── 13) Tier 3-⑫ 시간 애니메이션 Playback (월별)
+        st.markdown("---")
+        st.markdown("#### 🎬 시간 Playback — 월별 rolling 12M YoY")
+        st.caption("재생 버튼을 눌러 12개월 YoY의 월별 변화를 애니메이션으로 확인합니다.")
+
+        try:
+            # 월별 rolling 12M YoY 계산
+            dfw = df_month.pivot_table(index="YM", columns="품목", values="PPI", aggfunc="mean").sort_index()
+            roll_yoy = (dfw / dfw.shift(12) - 1) * 100
+            roll_yoy = roll_yoy.dropna(how="all")
+
+            if len(roll_yoy) > 1:
+                # 애니메이션용 long format
+                anim_rows = []
+                for ym, row in roll_yoy.iterrows():
+                    for item, val in row.items():
+                        if pd.notna(val):
+                            anim_rows.append({"YM": str(ym), "품목": item, "YoY12M(%)": round(float(val), 2)})
+                df_anim = pd.DataFrame(anim_rows)
+
+                if not df_anim.empty:
+                    fig_anim = px.bar(
+                        df_anim, x="품목", y="YoY12M(%)", color="YoY12M(%)",
+                        animation_frame="YM",
+                        color_continuous_scale=[[0, POSCO_COLORS["success"]],
+                                                [0.5, "#F8FAFC"],
+                                                [1, POSCO_COLORS["danger"]]],
+                        color_continuous_midpoint=0,
+                        range_y=[df_anim["YoY12M(%)"].min() - 5, df_anim["YoY12M(%)"].max() + 5],
+                        title="월별 12M YoY 변화 (재생 ▶ 클릭)",
+                    )
+                    fig_anim.update_layout(height=460)
+                    st.plotly_chart(fig_anim, use_container_width=True)
+                else:
+                    st.caption("애니메이션용 데이터 부족 (12개월 이상 필요)")
+            else:
+                st.caption("rolling 12M YoY 계산을 위해 12개월 이상의 데이터가 필요합니다.")
+        except Exception as e:
+            st.caption(f"애니메이션 생성 실패: {e}")
+
+        # ─── 14) 상관계수 매트릭스 (기존 유지)
+        st.markdown("---")
+        st.markdown(section_title("🔗 품목 간 가격 동조 상관계수"), unsafe_allow_html=True)
+        fig_c = px.imshow(
+            corr, color_continuous_scale="RdBu_r",
+            zmin=-1, zmax=1, text_auto=".2f",
+            title="상관계수 매트릭스 (1=동조, -1=역방향)",
+        )
+        fig_c.update_layout(height=max(350, 50 * len(corr)))
+        st.plotly_chart(fig_c, use_container_width=True)
+        st.caption(
+            "💡 해석: 상관이 높은 품목끼리는 같이 움직여 **리스크 집중**. "
+            "낮거나 음(-)의 상관 품목을 섞으면 **포트폴리오 분산 효과**."
+        )
 
 
 # ═══════════════════════════════════════════
