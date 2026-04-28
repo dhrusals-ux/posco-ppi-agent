@@ -363,6 +363,7 @@ def run_ppi_agent(
     llm_provider: str = "auto",
     openai_model: str = "gpt-4o-mini",
     gemini_model: str = "gemini-2.0-flash",
+    override_code: Optional[str] = None,
 ) -> dict:
     """
     전체 Agent 파이프라인 실행
@@ -375,6 +376,8 @@ def run_ppi_agent(
         True면 ECOS/LLM 모두 데모 모드
     llm_provider : str
         'auto' | 'openai' | 'gemini' | 'none' (규칙 기반)
+    override_code : str, optional
+        지정 시 자연어 매칭을 무시하고 이 ITEM_CODE로 조회 (INFO-200 회피용)
     """
     provider = "none" if use_demo else _resolve_provider(llm_provider)
     used_llm = None
@@ -404,6 +407,26 @@ def run_ppi_agent(
     else:
         ecos = ECOSClient()
         data_source = "🏦 한국은행 ECOS API"
+
+    # ★ 사용자가 직접 지정한 ITEM_CODE가 있으면 파서 결과를 덮어쓰기
+    if override_code:
+        parsed["recommended_code"] = override_code.strip()
+        parsed["override_applied"] = True
+        parsed["auto_matched"] = False
+    elif not use_demo and ecos_key:
+        # ★ LIVE 모드: ECOS 실시간 카탈로그로 자동 매칭 시도
+        try:
+            from utils.ecos_catalog import get_catalog, auto_match_code
+            catalog = get_catalog(api_key=ecos_key)
+            if catalog is not None and len(catalog) > 0:
+                best, candidates = auto_match_code(user_query, catalog)
+                if best and best["score"] >= 5.0:
+                    parsed["recommended_code"] = best["code"]
+                    parsed["auto_matched"] = True
+                    parsed["auto_match_info"] = best
+                    parsed["auto_match_candidates"] = candidates
+        except Exception as e:
+            print(f"[auto_match] 실패, 파서 결과 그대로 사용: {e}")
 
     base_ppi = ecos.get_ppi_at(parsed["recommended_code"], parsed["base_period"])
     target_ppi = ecos.get_ppi_at(parsed["recommended_code"], parsed["target_period"])

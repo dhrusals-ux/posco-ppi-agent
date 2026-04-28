@@ -15,12 +15,29 @@ class ECOSClient:
     PPI_STAT_CODE = "404Y014"  # 생산자물가지수 (품목별, 2020=100)
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("ECOS_API_KEY")
-        if not self.api_key:
+        raw = api_key or os.getenv("ECOS_API_KEY")
+        if not raw:
             raise ValueError(
                 "ECOS_API_KEY가 설정되지 않았습니다. "
                 "사이드바에서 인증키를 입력하거나 .env 파일을 확인하세요."
             )
+        # ★ 따옴표/공백/줄바꿈 방어 — 복붙 시 가장 흔한 INFO-100 원인
+        self.api_key = raw.strip().strip('"').strip("'").strip()
+
+    def _raise_with_hint(self, result: dict):
+        """ECOS 에러 코드에 친절한 한국어 설명을 붙여서 예외 발생"""
+        code = result.get("CODE", "")
+        msg = result.get("MESSAGE", "")
+        hints = {
+            "INFO-100": "→ API 키가 유효하지 않습니다. 앞뒤 따옴표·공백을 제거했는지, "
+                        "ECOS에서 발급 직후 최대 1시간 대기해야 하는지 확인하세요.",
+            "INFO-200": "→ 해당 기간/코드에 데이터가 없습니다. "
+                        "Tab 5(품목 코드 탐색)에서 실제 ITEM_CODE를 검색하고, "
+                        "시점이 최신 발표월 이내인지 확인하세요.",
+            "INFO-300": "→ 일일 호출 한도를 초과했습니다. 내일 다시 시도하세요.",
+        }
+        hint = hints.get(code, "")
+        raise RuntimeError(f"ECOS API 오류 [{code}] {msg}\n{hint}")
 
     def get_ppi(
         self,
@@ -52,7 +69,7 @@ class ECOSClient:
         data = r.json()
 
         if "RESULT" in data:
-            raise RuntimeError(f"ECOS API 오류: {data['RESULT']}")
+            self._raise_with_hint(data["RESULT"])
 
         rows = data.get("StatisticSearch", {}).get("row", [])
         if not rows:
@@ -94,7 +111,7 @@ class ECOSClient:
         data = r.json()
 
         if "RESULT" in data:
-            raise RuntimeError(f"ECOS API 오류: {data['RESULT']}")
+            self._raise_with_hint(data["RESULT"])
 
         rows = data.get("StatisticItemList", {}).get("row", [])
         if not rows:

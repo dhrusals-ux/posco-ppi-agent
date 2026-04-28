@@ -91,9 +91,15 @@ with st.sidebar:
         except Exception:
             default_ecos = os.getenv("ECOS_API_KEY", "")
 
-        ecos_key = st.text_input("ECOS API Key", type="password", value=default_ecos)
+        ecos_key = st.text_input("ECOS API Key", type="password", value=default_ecos,
+                                  help="앞뒤 따옴표·공백은 자동으로 제거됩니다.")
         if ecos_key:
-            os.environ["ECOS_API_KEY"] = ecos_key
+            # ★ 따옴표/공백/줄바꿈 자동 정리 — 복붙 시 흔한 INFO-100 원인
+            cleaned = ecos_key.strip().strip('"').strip("'").strip()
+            os.environ["ECOS_API_KEY"] = cleaned
+            if cleaned != ecos_key:
+                st.warning(f"⚠️ 입력된 키에 따옴표/공백이 포함되어 자동 정리했습니다 (길이 {len(ecos_key)} → {len(cleaned)}).")
+            st.caption(f"🔑 적용된 키 길이: **{len(cleaned)}자** (ECOS는 통상 40자)")
 
         st.divider()
         st.markdown("### 🧠 LLM 선택 (선택)")
@@ -132,6 +138,25 @@ with st.sidebar:
         st.markdown("- [ECOS API](https://ecos.bok.or.kr/api/) (무료)")
         st.markdown("- [Gemini API](https://aistudio.google.com/apikey) 🆓 **무료 추천**")
         st.markdown("- [OpenAI API](https://platform.openai.com/api-keys) (유료)")
+
+        # ★ 품목 카탈로그 자동 로드 상태
+        st.divider()
+        st.markdown("### 🗂️ 품목 카탈로그")
+        if os.getenv("ECOS_API_KEY"):
+            try:
+                from utils.ecos_catalog import get_catalog
+                catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+                if catalog is not None and len(catalog) > 0:
+                    st.success(f"✅ **{len(catalog):,}개** 품목 로드 완료\n\n자동 매칭 활성화됨")
+                    if st.button("🔄 카탈로그 새로고침", use_container_width=True):
+                        st.cache_data.clear()
+                        st.rerun()
+                else:
+                    st.warning("⚠️ 카탈로그 비어있음 — 키 확인 필요")
+            except Exception as e:
+                st.error(f"카탈로그 로드 실패: {e}")
+        else:
+            st.info("ECOS 키 입력 시 자동 로드됩니다")
 
     st.divider()
     st.markdown("### 📖 소개")
@@ -205,6 +230,15 @@ with tab1:
         placeholder="예: 2020년 1월 코크스 설비 800억원을 2026년 1월 기준으로 환산해줘",
     )
 
+    with st.expander("⚙️ 고급 옵션 — 직접 ITEM_CODE 지정 (INFO-200 회피)"):
+        st.caption(
+            "자연어 매칭이 placeholder 코드를 골라 INFO-200 에러가 날 때, "
+            "Tab 5에서 찾은 실제 코드를 여기 넣으면 Agent가 그 코드만 사용합니다."
+        )
+        override_code = st.text_input("강제 ITEM_CODE", value="",
+                                       placeholder="예: 5020 (비워두면 자동 매칭)",
+                                       key="tab1_override_code")
+
     run_btn = st.button("🚀 AI Agent 실행", type="primary", use_container_width=True)
 
     if run_btn:
@@ -215,11 +249,35 @@ with tab1:
         else:
             with st.spinner("🤖 AI Agent가 분석 중입니다..."):
                 try:
-                    result = run_ppi_agent(user_query, use_demo=use_demo, llm_provider=llm_provider)
+                    result = run_ppi_agent(
+                        user_query,
+                        use_demo=use_demo,
+                        llm_provider=llm_provider,
+                        override_code=(override_code.strip() or None),
+                    )
 
                     # 데이터 소스 표시
                     st.info(f"데이터 소스: {result['data_source']} | "
                             f"🧠 {result['used_llm']}")
+
+                    # ★ 자동 매칭 결과 표시
+                    if result["parsed"].get("auto_matched"):
+                        ami = result["parsed"].get("auto_match_info", {})
+                        st.success(
+                            f"🎯 **자동 매칭 성공** — 자연어 속 「{ami.get('matched_keyword','')}」 "
+                            f"→ ECOS 실제 코드 **`{ami.get('code','')}`** "
+                            f"({ami.get('name','')}) | 점수 {ami.get('score',0):.1f}"
+                        )
+                        cands = result["parsed"].get("auto_match_candidates", [])
+                        if len(cands) > 1:
+                            with st.expander(f"🔍 다른 후보 {len(cands)-1}개 보기"):
+                                import pandas as _pd
+                                st.dataframe(
+                                    _pd.DataFrame(cands)[["code", "name", "level", "score", "matched_keyword"]],
+                                    use_container_width=True, hide_index=True,
+                                )
+                    elif result["parsed"].get("override_applied"):
+                        st.info(f"⚙️ 직접 지정 코드 사용 중: `{result['parsed']['recommended_code']}`")
 
                     # 핵심 지표 4개
                     c1, c2, c3, c4 = st.columns(4)
@@ -271,7 +329,23 @@ with tab1:
 
                 except Exception as e:
                     st.error(f"❌ 실행 오류: {e}")
-                    st.exception(e)
+                    err_str = str(e)
+                    if "INFO-100" in err_str:
+                        st.info(
+                            "💡 **INFO-100 해결법**\n\n"
+                            "1. ECOS 키에 앞뒤 따옴표(`\"`)·공백이 포함되어 있지 않은지 확인 "
+                            "(v3부터 자동 제거됨)\n"
+                            "2. ECOS 신규 발급 키는 **최대 1시간** 활성화 대기 필요\n"
+                            "3. 키 길이 40자 내외인지 확인"
+                        )
+                    elif "INFO-200" in err_str:
+                        st.info(
+                            "💡 **INFO-200 해결법**\n\n"
+                            "1. 상단 **⚙️ 고급 옵션**을 펼쳐서 `강제 ITEM_CODE` 입력\n"
+                            "2. **🔎 품목 코드 탐색** 탭에서 실제 코드를 먼저 검색 → 여기에 붙여넣기"
+                        )
+                    with st.expander("상세 Traceback"):
+                        st.exception(e)
 
 
 # ═══════════════════════════════════════════
