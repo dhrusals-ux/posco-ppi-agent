@@ -81,32 +81,56 @@ with st.sidebar:
 
     if use_demo:
         st.success("✅ DEMO 모드\n\n가상 PPI 데이터로 동작합니다. API 키 없이 모든 기능을 체험할 수 있습니다.")
+        llm_provider = "none"
     else:
         st.markdown("### 🔑 API 키 입력")
-        # secrets.toml 또는 환경변수에서 먼저 시도
-        default_ecos = st.secrets.get("ECOS_API_KEY", os.getenv("ECOS_API_KEY", "")) if hasattr(st, "secrets") else os.getenv("ECOS_API_KEY", "")
-        default_openai = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", "")) if hasattr(st, "secrets") else os.getenv("OPENAI_API_KEY", "")
 
+        # ECOS 키
         try:
             default_ecos = st.secrets["ECOS_API_KEY"]
         except Exception:
             default_ecos = os.getenv("ECOS_API_KEY", "")
-        try:
-            default_openai = st.secrets["OPENAI_API_KEY"]
-        except Exception:
-            default_openai = os.getenv("OPENAI_API_KEY", "")
 
         ecos_key = st.text_input("ECOS API Key", type="password", value=default_ecos)
-        openai_key = st.text_input("OpenAI API Key (선택)", type="password", value=default_openai,
-                                    help="없어도 규칙 기반 파서로 동작합니다.")
-
         if ecos_key:
             os.environ["ECOS_API_KEY"] = ecos_key
-        if openai_key:
-            os.environ["OPENAI_API_KEY"] = openai_key
+
+        st.divider()
+        st.markdown("### 🧠 LLM 선택 (선택)")
+        llm_provider = st.radio(
+            "자연어 파싱에 사용할 LLM",
+            ["🆓 Gemini (무료, 추천)", "💰 OpenAI", "📐 사용 안 함 (규칙 기반)"],
+            help="Gemini는 무료 할당량이 넉넉합니다. 미사용 시 규칙 기반 파서가 동작합니다.",
+        )
+
+        # Gemini 키
+        if llm_provider.startswith("🆓"):
+            try:
+                default_gemini = st.secrets["GEMINI_API_KEY"]
+            except Exception:
+                default_gemini = os.getenv("GEMINI_API_KEY", "")
+            gemini_key = st.text_input("Gemini API Key", type="password", value=default_gemini,
+                                        help="https://aistudio.google.com/apikey 에서 무료 발급")
+            if gemini_key:
+                os.environ["GEMINI_API_KEY"] = gemini_key
+            llm_provider = "gemini"
+
+        # OpenAI 키
+        elif llm_provider.startswith("💰"):
+            try:
+                default_openai = st.secrets["OPENAI_API_KEY"]
+            except Exception:
+                default_openai = os.getenv("OPENAI_API_KEY", "")
+            openai_key = st.text_input("OpenAI API Key", type="password", value=default_openai)
+            if openai_key:
+                os.environ["OPENAI_API_KEY"] = openai_key
+            llm_provider = "openai"
+        else:
+            llm_provider = "none"
 
         st.markdown("##### 🔗 키 발급 링크")
         st.markdown("- [ECOS API](https://ecos.bok.or.kr/api/) (무료)")
+        st.markdown("- [Gemini API](https://aistudio.google.com/apikey) 🆓 **무료 추천**")
         st.markdown("- [OpenAI API](https://platform.openai.com/api-keys) (유료)")
 
     st.divider()
@@ -190,11 +214,11 @@ with tab1:
         else:
             with st.spinner("🤖 AI Agent가 분석 중입니다..."):
                 try:
-                    result = run_ppi_agent(user_query, use_demo=use_demo)
+                    result = run_ppi_agent(user_query, use_demo=use_demo, llm_provider=llm_provider)
 
                     # 데이터 소스 표시
                     st.info(f"데이터 소스: {result['data_source']} | "
-                            f"{'🧠 OpenAI' if result['used_openai'] else '📐 규칙 기반 파서'}")
+                            f"🧠 {result['used_llm']}")
 
                     # 핵심 지표 4개
                     c1, c2, c3, c4 = st.columns(4)

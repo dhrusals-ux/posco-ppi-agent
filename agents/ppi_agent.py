@@ -1,6 +1,6 @@
 """
 물가보정 AI Agent
-- OpenAI API 키가 있으면 GPT로 자연어 파싱
+- OpenAI 또는 Google Gemini API 키가 있으면 LLM으로 자연어 파싱
 - 없으면 규칙 기반 파서로 폴백 (데모 모드 지원)
 """
 import os
@@ -8,11 +8,20 @@ import re
 import json
 from typing import Optional
 
+# OpenAI (선택)
 try:
     from openai import OpenAI
     HAS_OPENAI = True
 except ImportError:
     HAS_OPENAI = False
+
+# Google Gemini (선택)
+try:
+    from google import genai
+    from google.genai import types as genai_types
+    HAS_GEMINI = True
+except ImportError:
+    HAS_GEMINI = False
 
 from utils.ecos_client import ECOSClient
 from utils.demo_data import DemoECOSClient
@@ -20,11 +29,10 @@ from data.ppi_categories import get_all_items, find_by_code, find_by_name
 
 
 # ═══════════════════════════════════════════════════════
-# 규칙 기반 폴백 파서 (OpenAI 없을 때 사용)
+# 규칙 기반 폴백 파서 (LLM 없을 때 사용)
 # ═══════════════════════════════════════════════════════
 
 EQUIPMENT_KEYWORDS = {
-    # 키워드 → 품목명
     "압연": "금속가공기계", "단조": "금속가공기계", "절단기": "금속가공기계",
     "로봇": "산업용 로봇", "용접": "산업용 로봇",
     "크레인": "운반하역장비", "컨베이어": "운반하역장비", "호이스트": "운반하역장비",
@@ -43,7 +51,7 @@ EQUIPMENT_KEYWORDS = {
     "계측": "산업용 계측기", "센서": "산업용 계측기",
     "분석기": "분석기기",
     "plc": "PLC/DCS", "dcs": "PLC/DCS",
-    "코크스": "철강 1차제품",  # 제철 부속
+    "코크스": "철강 1차제품",
     "고로": "철강 1차제품",
     "제강": "금속가공기계",
 }
@@ -52,19 +60,17 @@ EQUIPMENT_KEYWORDS = {
 def _extract_all_periods(text: str) -> list:
     """텍스트에서 모든 시점을 순서대로 추출 (YYYYMM 형식)"""
     results = []
-    # 전체 텍스트를 한 번만 스캔하면서 연-월 또는 연도 패턴 매칭
-    # 우선순위: "YYYY년 M월" > "YYYY-MM / YYYY.MM" > "YYYY년"
     pattern = re.compile(
-        r'(\d{4})\s*년\s*(\d{1,2})\s*월'     # 2020년 1월
-        r'|(\d{4})[-./](\d{1,2})(?![\d])'    # 2020-01, 2020.01
-        r'|(\d{4})\s*년'                      # 2020년
+        r'(\d{4})\s*년\s*(\d{1,2})\s*월'
+        r'|(\d{4})[-./](\d{1,2})(?![\d])'
+        r'|(\d{4})\s*년'
     )
     for m in pattern.finditer(text):
-        if m.group(1):  # YYYY년 M월
+        if m.group(1):
             y, mo = m.group(1), m.group(2).zfill(2)
-        elif m.group(3):  # YYYY-MM
+        elif m.group(3):
             y, mo = m.group(3), m.group(4).zfill(2)
-        else:  # YYYY년
+        else:
             y, mo = m.group(5), "01"
         results.append(f"{y}{mo}")
     return results
@@ -72,7 +78,6 @@ def _extract_all_periods(text: str) -> list:
 
 def _extract_cost(text: str) -> Optional[float]:
     """금액 추출 (억원 단위)"""
-    # "1,200억", "800억원", "1200억", "1.5조"
     m = re.search(r'(\d{1,3}(?:,\d{3})*|\d+(?:\.\d+)?)\s*(억|조)', text)
     if not m:
         return None
@@ -94,7 +99,6 @@ def _match_equipment(text: str) -> dict:
                     "keyword": keyword,
                     "reasoning": f"'{keyword}' 키워드 매칭 → {item['full_path']}",
                 }
-    # 기본값: 기계및장비 전체
     return {
         "code": "42",
         "keyword": "일반 설비",
@@ -103,7 +107,7 @@ def _match_equipment(text: str) -> dict:
 
 
 def parse_query_rule_based(user_query: str) -> dict:
-    """규칙 기반 파서 (OpenAI 미사용)"""
+    """규칙 기반 파서 (LLM 미사용)"""
     periods = _extract_all_periods(user_query)
     base = periods[0] if len(periods) >= 1 else "202001"
     target = periods[1] if len(periods) >= 2 else "202601"
@@ -124,15 +128,11 @@ def parse_query_rule_based(user_query: str) -> dict:
 
 
 # ═══════════════════════════════════════════════════════
-# OpenAI 기반 파서
+# 프롬프트 빌더 (OpenAI/Gemini 공통)
 # ═══════════════════════════════════════════════════════
 
-def parse_query_openai(user_query: str, model: str = "gpt-4o-mini") -> dict:
-    """OpenAI로 자연어 파싱 + 품목 자동 선택"""
-    if not HAS_OPENAI:
-        raise RuntimeError("openai 패키지가 설치되지 않았습니다.")
-
-    client = OpenAI()
+def _build_parse_prompt(user_query: str) -> tuple:
+    """파싱용 system + user 프롬프트 생성"""
     items = get_all_items()
     items_text = "\n".join([
         f"- {it['code']}: {it['full_path']} ({it['desc']})"
@@ -145,7 +145,7 @@ def parse_query_openai(user_query: str, model: str = "gpt-4o-mini") -> dict:
 [사용 가능한 PPI 품목 목록]
 {items_text}
 
-응답은 반드시 다음 JSON 형식:
+응답은 반드시 다음 JSON 형식만 출력하세요 (다른 설명 없이):
 {{
   "base_period": "YYYYMM",
   "target_period": "YYYYMM",
@@ -154,37 +154,16 @@ def parse_query_openai(user_query: str, model: str = "gpt-4o-mini") -> dict:
   "recommended_code": "선택한 품목코드",
   "reasoning": "왜 이 코드를 선택했는지 1-2문장"
 }}"""
-
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_query},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0,
-    )
-    return json.loads(response.choices[0].message.content)
+    return system, user_query
 
 
-# ═══════════════════════════════════════════════════════
-# 보고서 생성
-# ═══════════════════════════════════════════════════════
-
-def generate_report_openai(
-    parsed: dict,
-    base_ppi: float,
-    target_ppi: float,
-    item_info: dict,
-    model: str = "gpt-4o-mini",
-) -> str:
-    """OpenAI로 보고서 생성"""
-    client = OpenAI()
+def _build_report_prompt(parsed, base_ppi, target_ppi, item_info) -> str:
+    """보고서 생성용 프롬프트"""
     factor = target_ppi / base_ppi
     adjusted = parsed["original_cost"] * factor
     pct = (factor - 1) * 100
 
-    prompt = f"""다음 물가보정 분석 결과를 한국어 마크다운 보고서로 작성하세요.
+    return f"""다음 물가보정 분석 결과를 한국어 마크다운 보고서로 작성하세요.
 
 [입력]
 - 원금: {parsed['original_cost']:,} 억원
@@ -214,6 +193,32 @@ def generate_report_openai(
 ### 4. 환산 결과 (굵게 강조)
 ### 5. 검토 코멘트 (PPI 변동 원인 추론, 추가 검토사항)"""
 
+
+# ═══════════════════════════════════════════════════════
+# OpenAI 호출
+# ═══════════════════════════════════════════════════════
+
+def parse_query_openai(user_query: str, model: str = "gpt-4o-mini") -> dict:
+    if not HAS_OPENAI:
+        raise RuntimeError("openai 패키지가 설치되지 않았습니다.")
+    client = OpenAI()
+    system, user = _build_parse_prompt(user_query)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0,
+    )
+    return json.loads(response.choices[0].message.content)
+
+
+def generate_report_openai(parsed, base_ppi, target_ppi, item_info,
+                            model: str = "gpt-4o-mini") -> str:
+    client = OpenAI()
+    prompt = _build_report_prompt(parsed, base_ppi, target_ppi, item_info)
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
@@ -222,18 +227,72 @@ def generate_report_openai(
     return response.choices[0].message.content
 
 
-def generate_report_template(
-    parsed: dict,
-    base_ppi: float,
-    target_ppi: float,
-    item_info: dict,
-) -> str:
-    """템플릿 기반 보고서 (OpenAI 미사용, 데모 모드)"""
+# ═══════════════════════════════════════════════════════
+# Gemini 호출
+# ═══════════════════════════════════════════════════════
+
+def _extract_json_from_text(text: str) -> dict:
+    """Gemini 응답에서 JSON 블록 추출"""
+    # ```json ... ``` 블록 제거
+    text = re.sub(r'^```(?:json)?\s*', '', text.strip())
+    text = re.sub(r'\s*```$', '', text)
+    # 첫 { 와 마지막 } 사이만 추출
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1:
+        text = text[start:end + 1]
+    return json.loads(text)
+
+
+def parse_query_gemini(user_query: str, model: str = "gemini-2.0-flash") -> dict:
+    if not HAS_GEMINI:
+        raise RuntimeError("google-genai 패키지가 설치되지 않았습니다.")
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY가 설정되지 않았습니다.")
+
+    client = genai.Client(api_key=api_key)
+    system, user = _build_parse_prompt(user_query)
+
+    response = client.models.generate_content(
+        model=model,
+        contents=user,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0,
+            response_mime_type="application/json",
+        ),
+    )
+    return _extract_json_from_text(response.text)
+
+
+def generate_report_gemini(parsed, base_ppi, target_ppi, item_info,
+                            model: str = "gemini-2.0-flash") -> str:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY가 설정되지 않았습니다.")
+
+    client = genai.Client(api_key=api_key)
+    prompt = _build_report_prompt(parsed, base_ppi, target_ppi, item_info)
+
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=genai_types.GenerateContentConfig(temperature=0.3),
+    )
+    return response.text
+
+
+# ═══════════════════════════════════════════════════════
+# 템플릿 기반 보고서 (LLM 미사용)
+# ═══════════════════════════════════════════════════════
+
+def generate_report_template(parsed, base_ppi, target_ppi, item_info) -> str:
+    """템플릿 기반 보고서 (LLM 미사용, 데모 모드)"""
     factor = target_ppi / base_ppi
     adjusted = parsed["original_cost"] * factor
     pct = (factor - 1) * 100
 
-    # 변동률 기반 코멘트
     if pct > 20:
         comment = "큰 폭의 상승 — 원자재 가격 급등 및 글로벌 공급망 영향 가능성"
     elif pct > 10:
@@ -285,10 +344,25 @@ def generate_report_template(
 # 메인 파이프라인
 # ═══════════════════════════════════════════════════════
 
+def _resolve_provider(provider: Optional[str] = None) -> str:
+    """사용할 LLM provider 결정 (auto / openai / gemini / none)"""
+    if provider and provider != "auto":
+        return provider
+
+    # auto: 환경변수 기준으로 결정
+    if os.getenv("GEMINI_API_KEY", "").strip() and HAS_GEMINI:
+        return "gemini"
+    if os.getenv("OPENAI_API_KEY", "").strip() and HAS_OPENAI:
+        return "openai"
+    return "none"
+
+
 def run_ppi_agent(
     user_query: str,
     use_demo: bool = False,
-    model: str = "gpt-4o-mini",
+    llm_provider: str = "auto",
+    openai_model: str = "gpt-4o-mini",
+    gemini_model: str = "gemini-2.0-flash",
 ) -> dict:
     """
     전체 Agent 파이프라인 실행
@@ -298,23 +372,31 @@ def run_ppi_agent(
     user_query : str
         자연어 요청
     use_demo : bool
-        True면 ECOS/OpenAI 모두 데모 모드 (API 키 불필요)
+        True면 ECOS/LLM 모두 데모 모드
+    llm_provider : str
+        'auto' | 'openai' | 'gemini' | 'none' (규칙 기반)
     """
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-    use_openai = bool(openai_key) and HAS_OPENAI and not use_demo
+    provider = "none" if use_demo else _resolve_provider(llm_provider)
+    used_llm = None
 
     # 1. 파싱
-    if use_openai:
-        try:
-            parsed = parse_query_openai(user_query, model)
-        except Exception as e:
-            print(f"⚠️ OpenAI 파싱 실패, 규칙 기반으로 폴백: {e}")
+    try:
+        if provider == "gemini":
+            parsed = parse_query_gemini(user_query, gemini_model)
+            used_llm = f"Gemini ({gemini_model})"
+        elif provider == "openai":
+            parsed = parse_query_openai(user_query, openai_model)
+            used_llm = f"OpenAI ({openai_model})"
+        else:
             parsed = parse_query_rule_based(user_query)
-            use_openai = False
-    else:
+            used_llm = "규칙 기반 파서"
+    except Exception as e:
+        print(f"⚠️ LLM 파싱 실패, 규칙 기반으로 폴백: {e}")
         parsed = parse_query_rule_based(user_query)
+        used_llm = "규칙 기반 파서 (LLM 실패 폴백)"
+        provider = "none"
 
-    # 2. ECOS 조회 (데모 모드 분기)
+    # 2. ECOS 조회
     ecos_key = os.getenv("ECOS_API_KEY", "").strip()
     if use_demo or not ecos_key:
         ecos = DemoECOSClient()
@@ -336,13 +418,15 @@ def run_ppi_agent(
         }
 
     # 4. 보고서 생성
-    if use_openai:
-        try:
-            report = generate_report_openai(parsed, base_ppi, target_ppi, item_info, model)
-        except Exception as e:
-            print(f"⚠️ OpenAI 보고서 실패, 템플릿 사용: {e}")
+    try:
+        if provider == "gemini":
+            report = generate_report_gemini(parsed, base_ppi, target_ppi, item_info, gemini_model)
+        elif provider == "openai":
+            report = generate_report_openai(parsed, base_ppi, target_ppi, item_info, openai_model)
+        else:
             report = generate_report_template(parsed, base_ppi, target_ppi, item_info)
-    else:
+    except Exception as e:
+        print(f"⚠️ LLM 보고서 실패, 템플릿 사용: {e}")
         report = generate_report_template(parsed, base_ppi, target_ppi, item_info)
 
     factor = target_ppi / base_ppi
@@ -355,5 +439,6 @@ def run_ppi_agent(
         "adjusted_cost": parsed["original_cost"] * factor,
         "report": report,
         "data_source": data_source,
-        "used_openai": use_openai,
+        "used_llm": used_llm,
+        "used_openai": provider == "openai",  # 이전 버전 호환
     }
