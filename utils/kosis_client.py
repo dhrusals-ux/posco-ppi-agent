@@ -25,6 +25,7 @@ class KOSISClient:
 
     ORG_ID = "397"            # 한국건설기술연구원
     TBL_ID = "DT_39701_A003"  # 건설공사비지수(2020년기준)
+    DEFAULT_ITM_ID = "16397AAA0"  # 지수 항목 (실측 확인값)
 
     def __init__(self, api_key: Optional[str] = None,
                  org_id: Optional[str] = None, tbl_id: Optional[str] = None):
@@ -103,22 +104,24 @@ class KOSISClient:
     # ECOS 호환 인터페이스
     # ───────────────────────────────────────
     def get_ppi(self, item_code: str, start: str, end: str,
-                cycle: str = "M", itm_id: str = "ALL") -> pd.DataFrame:
+                cycle: str = "M", itm_id: Optional[str] = None) -> pd.DataFrame:
         """
         건설공사비지수 시계열 조회 (ECOSClient.get_ppi 호환)
 
         item_code : 공종 분류 코드(objL1). 'ALL' 도 가능.
-        itm_id    : 항목 코드. 기본 'ALL'(통계표가 단일 항목이면 그대로 반환).
+        itm_id    : 항목 코드. 기본은 통계표 실측 항목(16397AAA0).
         반환: DataFrame[TIME, ITEM_NAME1, DATA_VALUE]
         """
         prd_se = {"M": "M", "Q": "Q", "A": "Y", "Y": "Y"}.get(cycle, "M")
         rows = self._request({
-            "itmId": itm_id, "objL1": item_code,
+            "itmId": itm_id or self.DEFAULT_ITM_ID, "objL1": item_code,
             "prdSe": prd_se, "startPrdDe": start, "endPrdDe": end,
         })
         if not rows:
             raise ValueError(
-                f"공종코드 '{item_code}' 데이터가 없습니다. 분류코드/기간을 확인하세요."
+                f"공종코드 '{item_code}' · 기간 {start}~{end} 데이터가 없습니다.\n"
+                f"→ 건설공사비지수는 발표가 1~2개월 지연됩니다. "
+                f"목표 시점을 최근 발표월(예: 2~3개월 전)로 조정해 보세요."
             )
 
         df = pd.DataFrame(rows)
@@ -133,7 +136,7 @@ class KOSISClient:
         return out
 
     def get_ppi_at(self, item_code: str, period: str,
-                   cycle: str = "M", itm_id: str = "ALL") -> float:
+                   cycle: str = "M", itm_id: Optional[str] = None) -> float:
         df = self.get_ppi(item_code, period, period, cycle, itm_id)
         if len(df) == 0:
             raise ValueError(f"{period} 시점 데이터가 없습니다 (코드 {item_code}).")

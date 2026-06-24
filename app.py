@@ -816,7 +816,10 @@ with tab_cci:
         i1, i2, i3 = st.columns(3)
         cci_cost = i1.number_input("\U0001F4B0 공사 원금 (억원)", 0.0, 1_000_000.0, 500.0, step=10.0, key="cci_cost")
         cci_base = i2.text_input("기준 시점 (YYYYMM)", "202001", key="cci_base")
-        cci_target = i3.text_input("목표 시점 (YYYYMM)", datetime.now().strftime("%Y%m"), key="cci_target")
+        # 건설공사비지수는 발표가 1~2개월 지연 → 기본 목표를 2개월 전으로
+        _cci_default_target = (datetime.now().replace(day=1) - pd.Timedelta(days=60)).strftime("%Y%m")
+        cci_target = i3.text_input("목표 시점 (YYYYMM)", _cci_default_target, key="cci_target",
+                                   help="건설공사비지수는 발표가 1~2개월 늦습니다. 최근 발표월로 설정하세요.")
 
         if st.button("\U0001F3D7\uFE0F 공사비 환산 실행", type="primary", use_container_width=True, key="cci_run"):
             if not cci_code:
