@@ -14,7 +14,6 @@ import plotly.express as px
 
 from agents.ppi_agent import run_ppi_agent
 from utils.ecos_client import ECOSClient
-from utils.demo_data import DemoECOSClient, DemoKOSISClient
 from utils.kosis_client import KOSISClient
 from utils.ecos_catalog import get_catalog
 from data.ppi_categories import CATEGORY_FILTERS, filter_catalog_by_category
@@ -43,16 +42,12 @@ pio.templates.default = "posco"
 
 
 def get_client():
-    """현재 모드에 따른 ECOS 클라이언트"""
-    if st.session_state.get("use_demo", True):
-        return DemoECOSClient()
+    """ECOS 클라이언트 (LIVE 전용)"""
     return ECOSClient()
 
 
 def get_construction_client():
-    """현재 모드에 따른 KOSIS(건설공사비지수) 클라이언트"""
-    if st.session_state.get("use_demo", True):
-        return DemoKOSISClient()
+    """KOSIS(건설공사비지수) 클라이언트 (LIVE 전용) — 준비 중"""
     return KOSISClient()
 
 
@@ -74,107 +69,106 @@ if "loaded_qp" not in st.session_state:
 # 사이드바
 # ═══════════════════════════════════════════
 with st.sidebar:
-    st.markdown("### ⚙️ 실행 모드")
-    use_demo = st.radio(
-        "모드 선택",
-        ["📦 DEMO 모드 (API 키 불필요)", "🏦 LIVE 모드 (실제 ECOS)"],
-        index=0,
-    ).startswith("📦")
-    st.session_state["use_demo"] = use_demo
+    # 항상 LIVE(ECOS) 전용 — DEMO 제거
+    use_demo = False
+    st.session_state["use_demo"] = False
 
-    st.divider()
+    st.markdown("### 🔑 데이터 연결")
 
-    if use_demo:
-        st.success("✅ DEMO 모드 — 가상 PPI 데이터로 동작")
-        llm_provider = "none"
+    # ── ECOS 키: secrets 우선, 없으면 입력란 폴백 ──
+    ecos_from_secrets = ""
+    try:
+        ecos_from_secrets = st.secrets["ECOS_API_KEY"]
+    except Exception:
+        ecos_from_secrets = os.getenv("ECOS_API_KEY", "")
+
+    if ecos_from_secrets:
+        # 배포 환경: 키가 이미 설정됨 → 사용자는 키를 몰라도 됨
+        os.environ["ECOS_API_KEY"] = ecos_from_secrets.strip().strip('"').strip("'").strip()
+        st.success("✅ 한국은행 ECOS 연결됨")
     else:
-        st.markdown("### 🔑 API 키")
-        try:
-            default_ecos = st.secrets["ECOS_API_KEY"]
-        except Exception:
-            default_ecos = os.getenv("ECOS_API_KEY", "")
-
+        # 로컬/미설정: 입력란 폴백
+        st.info("ECOS 인증키가 설정되지 않았습니다. 아래에 입력하세요.")
         ecos_key = st.text_input(
-            "ECOS API Key", type="password", value=default_ecos,
-            help="앞뒤 따옴표·공백은 자동 제거",
+            "ECOS API Key", type="password",
+            help="관리자가 secrets에 등록하면 이 입력란은 사라집니다.",
         )
         if ecos_key:
             cleaned = ecos_key.strip().strip('"').strip("'").strip()
             os.environ["ECOS_API_KEY"] = cleaned
-            if cleaned != ecos_key:
-                st.warning(f"⚠️ 따옴표/공백 정리: {len(ecos_key)}→{len(cleaned)}자")
 
-        # 🏗️ KOSIS (건설공사비지수)
+    st.divider()
+
+    # ── LLM (자연어 파싱 고도화, 선택) ──
+    st.markdown("### 🧠 자연어 파싱 LLM")
+    st.caption("미설정 시 규칙 기반 파서로 동작합니다.")
+    llm_choice = st.radio(
+        "LLM 선택",
+        ["📐 규칙 기반 (기본)", "🆓 Gemini", "💰 OpenAI"],
+        label_visibility="collapsed",
+    )
+    if llm_choice.startswith("🆓"):
         try:
-            default_kosis = st.secrets["KOSIS_API_KEY"]
+            default_gem = st.secrets["GEMINI_API_KEY"]
         except Exception:
-            default_kosis = os.getenv("KOSIS_API_KEY", "")
-        kosis_key = st.text_input(
-            "KOSIS API Key (공사비)", type="password", value=default_kosis,
-            help="건설공사비지수 조회용 · kosis.kr 공유서비스에서 무료 발급",
-        )
-        if kosis_key:
-            ck = kosis_key.strip().strip('"').strip("'").strip()
-            os.environ["KOSIS_API_KEY"] = ck
-
-        st.markdown("##### 🧠 LLM")
-        llm_choice = st.radio(
-            "자연어 파싱 LLM",
-            ["🆓 Gemini (추천)", "💰 OpenAI", "📐 규칙 기반"],
-            label_visibility="collapsed",
-        )
-        if llm_choice.startswith("🆓"):
-            try:
-                default_gem = st.secrets["GEMINI_API_KEY"]
-            except Exception:
-                default_gem = os.getenv("GEMINI_API_KEY", "")
-            gk = st.text_input("Gemini Key", type="password", value=default_gem)
+            default_gem = os.getenv("GEMINI_API_KEY", "")
+        if default_gem:
+            os.environ["GEMINI_API_KEY"] = default_gem.strip().strip('"').strip("'")
+            st.success("✅ Gemini 연결됨")
+        else:
+            gk = st.text_input("Gemini Key", type="password")
             if gk:
                 os.environ["GEMINI_API_KEY"] = gk.strip().strip('"').strip("'")
-            llm_provider = "gemini"
-            # 🆕 Gemini 모델 선택 (신규 API 차단 대응)
-            gemini_model_choice = st.selectbox(
-                "Gemini 모델",
-                ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-flash-latest", "gemini-2.0-flash"],
-                index=0,
-                help="Google이 특정 모델을 차단할 경우 여기서 다른 모델로 전환하세요.",
-            )
-            os.environ["GEMINI_MODEL"] = gemini_model_choice
-        elif llm_choice.startswith("💰"):
-            try:
-                default_oai = st.secrets["OPENAI_API_KEY"]
-            except Exception:
-                default_oai = os.getenv("OPENAI_API_KEY", "")
-            ok = st.text_input("OpenAI Key", type="password", value=default_oai)
+        llm_provider = "gemini"
+        gemini_model_choice = st.selectbox(
+            "Gemini 모델",
+            ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-flash-latest", "gemini-2.0-flash"],
+            index=0,
+            help="특정 모델이 차단될 경우 다른 모델로 전환하세요.",
+        )
+        os.environ["GEMINI_MODEL"] = gemini_model_choice
+    elif llm_choice.startswith("💰"):
+        try:
+            default_oai = st.secrets["OPENAI_API_KEY"]
+        except Exception:
+            default_oai = os.getenv("OPENAI_API_KEY", "")
+        if default_oai:
+            os.environ["OPENAI_API_KEY"] = default_oai.strip().strip('"').strip("'")
+            st.success("✅ OpenAI 연결됨")
+        else:
+            ok = st.text_input("OpenAI Key", type="password")
             if ok:
                 os.environ["OPENAI_API_KEY"] = ok.strip().strip('"').strip("'")
-            llm_provider = "openai"
-        else:
-            llm_provider = "none"
+        llm_provider = "openai"
+    else:
+        llm_provider = "none"
 
-        st.divider()
-        st.markdown("### 🗂️ 카탈로그")
-        if os.getenv("ECOS_API_KEY"):
-            try:
-                catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
-                if catalog is not None and len(catalog) > 0:
-                    st.success(f"✅ ECOS 품목 **{len(catalog):,}개** 로드")
-                    if st.button("🔄 카탈로그 새로고침", use_container_width=True):
-                        st.cache_data.clear()
-                        st.rerun()
-                else:
-                    st.warning("카탈로그 비어있음")
-            except Exception as e:
-                st.error(f"로드 실패: {e}")
+    st.divider()
+    st.markdown("### 🗂️ ECOS 품목 카탈로그")
+    if os.getenv("ECOS_API_KEY"):
+        try:
+            catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+            if catalog is not None and len(catalog) > 0:
+                st.success(f"품목 **{len(catalog):,}개** 로드됨")
+                if st.button("🔄 카탈로그 새로고침", use_container_width=True):
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.warning("카탈로그 비어있음")
+        except Exception as e:
+            st.error(f"로드 실패: {e}")
+    else:
+        st.caption("ECOS 연결 후 품목 카탈로그가 표시됩니다.")
 
     st.divider()
     st.markdown("### 📖 소개")
     st.caption(
-        "**POSCO 투자엔지니어링실 교육용 데모**\n\n"
-        "한국은행 ECOS API를 활용해 과거 투자비를 "
-        "현재 시점 PPI로 자동 환산하는 AI Agent입니다."
+        "**POSCO 투자엔지니어링실 투자비 물가보정 도구**\n\n"
+        "한국은행 ECOS 생산자물가지수(PPI)로 과거 설비 투자비를 "
+        "현재 시점 가치로 환산합니다."
     )
-    st.markdown(live_badge("ECOS LIVE" if not use_demo else "DEMO"), unsafe_allow_html=True)
+    st.markdown(live_badge("ECOS LIVE"), unsafe_allow_html=True)
+
 
 
 # ═══════════════════════════════════════════
@@ -182,23 +176,29 @@ with st.sidebar:
 # ═══════════════════════════════════════════
 st.markdown(
     hero_header(
-        "🏭 POSCO 투자비 물가보정 AI Agent",
-        "ECOS API × AI Agent × 시나리오 분석 × 포트폴리오 환산 — 투자엔지니어링 실무 올인원 대시보드",
+        "🏭 POSCO 투자비 물가보정 시스템",
+        "한국은행 ECOS 생산자물가지수 기반 설비 투자비 현재가치 환산 — 투자엔지니어링실 실무 도구",
     ),
     unsafe_allow_html=True,
 )
 
+# ── 키 미설정 게이트: ECOS 연결 전에는 본문 차단 ──
+if not os.getenv("ECOS_API_KEY"):
+    st.warning(
+        "🔌 **한국은행 ECOS 인증키가 설정되지 않았습니다.**\n\n"
+        "왼쪽 사이드바에 키를 입력하거나, 배포 환경에서는 관리자가 "
+        "`secrets.toml`(또는 Streamlit Cloud Secrets)에 `ECOS_API_KEY`를 등록해야 합니다.\n\n"
+        "→ ECOS 인증키 무료 발급: https://ecos.bok.or.kr/api/"
+    )
+    st.stop()
+
 
 # 상단 KPI 스트립 (총지수 현황)
 def fetch_top_kpi():
-    """ECOS 총지수 최신 3개월 데이터 → KPI 카드용"""
+    """ECOS 총지수 최신 데이터 → KPI 카드용"""
+    if not os.getenv("ECOS_API_KEY"):
+        return None
     try:
-        if use_demo:
-            # DEMO 데이터
-            return {
-                "total": 118.5, "yoy": 2.1, "mom": 0.3,
-                "latest_period": "2026-03", "source": "DEMO",
-            }
         client = ECOSClient()
         # 총지수 (404Y014 통계표의 '*AA')
         end = datetime.now().strftime("%Y%m")
@@ -352,17 +352,15 @@ with tab_ai:
     if run_clicked:
         if not user_query.strip():
             st.warning("요청 내용을 입력해 주세요.")
-        elif not use_demo and not os.getenv("ECOS_API_KEY"):
-            st.error("⚠️ LIVE 모드에서는 ECOS API Key가 필요합니다.")
         else:
             with st.spinner("🤖 AI Agent 분석 중..."):
                 try:
                     result = run_ppi_agent(
-                        user_query, use_demo=use_demo, llm_provider=llm_provider,
+                        user_query, use_demo=False, llm_provider=llm_provider,
                         override_code=(override_code.strip() or None),
                         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
                     )
-                    # 🆕 세션에 결과 저장 — Gemini 버튼 눌러도 화면 유지
+                    # 결과를 세션에 저장 — Gemini 버튼 눌러도 화면 유지
                     st.session_state["tab1_result"] = result
                 except Exception as e:
                     err_str = str(e)
@@ -499,7 +497,11 @@ with tab_ai:
                             "환산금액": f"{adj:,.1f} 억원",
                             "증감": f"{diff:+,.1f} 억원 ({(factor-1)*100:+.2f}%)",
                         },
-                        body_text=result["report"],
+                        body_text=result["report"] + (
+                            "\n\n---\n*본 환산 결과는 포스코 투자엔지니어링실 내부 투자비 추정·검토용입니다. "
+                            "「국가를 당사자로 하는 계약에 관한 법률」상 계약금액조정(물가변동) 산식과는 다르므로, "
+                            "공식 계약 근거 자료로 사용하지 마십시오.*"
+                        ),
                         table_df=df_full[["TIME", "DATA_VALUE"]].rename(
                             columns={"TIME": "시점", "DATA_VALUE": "PPI"}
                         ),
@@ -605,16 +607,9 @@ with tab_ai:
 # Tab 2: 설비별 PPI 조회
 # ═══════════════════════════════════════════
 with tab_ppi:
-    st.markdown(section_title("🔍 ECOS 실제 품목 단일 조회"), unsafe_allow_html=True)
+    st.markdown(section_title("🔍 ECOS 품목 단일 조회"), unsafe_allow_html=True)
 
-    if use_demo:
-        st.info("📦 DEMO 모드 — 가상 데이터 조회")
-        active_code = "DEMO"
-        active_name = "데모 품목"
-    elif not os.getenv("ECOS_API_KEY"):
-        st.warning("⚠️ ECOS API Key가 필요합니다.")
-        st.stop()
-    else:
+    if True:
         mode = st.radio(
             "입력 방식",
             ["📂 카테고리 필터", "🔍 이름 검색", "⌨️ 코드 직접 입력"],
@@ -747,190 +742,17 @@ with tab_ppi:
 # Tab: 🏗️ 공사비 물가보정 (KOSIS 건설공사비지수)
 # ═══════════════════════════════════════════
 with tab_cci:
-    st.markdown(section_title("🏗️ 건설공사비지수 기반 공사비 환산"), unsafe_allow_html=True)
-    st.caption(
-        "한국건설기술연구원 건설공사비지수(KOSIS, 2020=100)로 과거 공사비를 현재가치로 환산합니다. "
-        "설비비(ECOS PPI)와 달리 인건비·자재비가 반영된 건설 공종 지수입니다."
+    st.markdown(section_title("🏗️ 공사비 물가보정 (건설공사비지수)"), unsafe_allow_html=True)
+    st.info(
+        "🚧 **준비 중입니다.**\n\n"
+        "한국건설기술연구원 **건설공사비지수(KOSIS, 2020=100)** 연동으로 "
+        "설비비(ECOS PPI)뿐 아니라 토목·건축·플랜트 등 **공사비 물가보정**을 지원할 예정입니다.\n\n"
+        "→ KOSIS 공유서비스 인증키 확보 및 통계표(DT_39701_A003) 분류 코드 실측 검증 후 오픈합니다."
     )
-
-    if use_demo:
-        st.info("📦 DEMO 모드 — 가상 건설공사비지수로 동작합니다.")
-    elif not os.getenv("KOSIS_API_KEY"):
-        st.warning("⚠️ LIVE 모드에서 공사비 환산을 쓰려면 사이드바에 **KOSIS API Key**가 필요합니다.")
-
-    # 공종 선택
-    items = get_all_construction_items()
-    labels = [f"{it['icon']} {it['name']}" for it in items]
-    col_sel, col_code = st.columns([2, 1])
-    with col_sel:
-        sel_label = st.selectbox("🏗️ 공종 선택", labels, key="cci_sel")
-        sel_idx = labels.index(sel_label)
-        cci_code = items[sel_idx]["code"]
-        cci_name = items[sel_idx]["name"]
-    with col_code:
-        override_cci = st.text_input(
-            "⚙️ 강제 공종코드(objL1)", "",
-            help="LIVE 연동 시 실제 KOSIS objL1 코드로 덮어쓰기",
-            key="cci_override",
-        )
-        if override_cci.strip():
-            cci_code = override_cci.strip()
-
-    st.caption(f"📌 **{cci_name}** · 공종코드 `{cci_code}` · {items[sel_idx]['desc']}")
-
-    # 입력: 원금 + 기준/목표 시점
-    i1, i2, i3 = st.columns(3)
-    cci_cost = i1.number_input("💰 공사 원금 (억원)", 0.0, 1_000_000.0, 500.0, step=10.0, key="cci_cost")
-    cci_base = i2.text_input("기준 시점 (YYYYMM)", "202001", key="cci_base")
-    cci_target = i3.text_input("목표 시점 (YYYYMM)", "202604", key="cci_target")
-
-    if st.button("🏗️ 공사비 환산 실행", type="primary", use_container_width=True, key="cci_run"):
-        try:
-            client = get_construction_client()
-            base_idx = client.get_ppi_at(cci_code, cci_base)
-            target_idx = client.get_ppi_at(cci_code, cci_target)
-            factor = target_idx / base_idx
-            adjusted = cci_cost * factor
-            diff = adjusted - cci_cost
-
-            st.session_state["cci_result"] = {
-                "code": cci_code, "name": cci_name,
-                "cost": cci_cost, "base": cci_base, "target": cci_target,
-                "base_idx": base_idx, "target_idx": target_idx,
-                "factor": factor, "adjusted": adjusted, "diff": diff,
-            }
-        except Exception as e:
-            st.error(f"❌ 환산 실패: {e}")
-            st.session_state.pop("cci_result", None)
-
-    # 결과 렌더 (세션 유지)
-    if "cci_result" in st.session_state:
-        res = st.session_state["cci_result"]
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.markdown(kpi_card("원금", f"{res['cost']:,.0f} 억",
-                                 delta=res["base"], icon="💰"), unsafe_allow_html=True)
-        with c2:
-            st.markdown(kpi_card("보정계수", f"{res['factor']:.4f}",
-                                 delta=f"{(res['factor']-1)*100:+.2f}%",
-                                 delta_type="up" if res["factor"] > 1 else "down",
-                                 icon="⚖️"), unsafe_allow_html=True)
-        with c3:
-            st.markdown(kpi_card("증감액", f"{res['diff']:+,.1f} 억",
-                                 delta="현재가 기준",
-                                 delta_type="up" if res["diff"] > 0 else "down",
-                                 icon="📊"), unsafe_allow_html=True)
-        with c4:
-            st.markdown(kpi_card("환산 공사비", f"{res['adjusted']:,.1f} 억",
-                                 delta=res["target"], delta_type="neutral",
-                                 icon="🎯", highlight=True), unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown(section_title("📈 건설공사비지수 추이"), unsafe_allow_html=True)
-        try:
-            client = get_construction_client()
-            df_full = client.get_ppi(res["code"], "201501", res["target"])
-            df_full["TIME_DT"] = pd.to_datetime(df_full["TIME"], format="%Y%m")
-
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=df_full["TIME_DT"], y=df_full["DATA_VALUE"],
-                mode="lines", name="건설공사비지수",
-                line=dict(color=POSCO_COLORS["accent"], width=2.5),
-                fill="tozeroy", fillcolor="rgba(242,159,5,0.08)",
-                hovertemplate="<b>%{x|%Y년 %m월}</b><br>지수: %{y:.2f}<extra></extra>",
-            ))
-
-            def _mark_cci(period, label, color):
-                try:
-                    t = pd.to_datetime(period, format="%Y%m")
-                    v = df_full[df_full["TIME"] == period]["DATA_VALUE"]
-                    if len(v) > 0:
-                        fig.add_trace(go.Scatter(
-                            x=[t], y=[float(v.iloc[0])],
-                            mode="markers+text",
-                            marker=dict(size=14, color=color, line=dict(color="white", width=2)),
-                            text=[label], textposition="top center",
-                            textfont=dict(size=11, color=color), showlegend=False,
-                        ))
-                except Exception:
-                    pass
-
-            _mark_cci(res["base"], "📍 기준", POSCO_COLORS["primary"])
-            _mark_cci(res["target"], "🎯 목표", POSCO_COLORS["danger"])
-
-            fig.add_hline(y=100, line_dash="dash", line_color=POSCO_COLORS["neutral_500"],
-                          annotation_text="2020 기준 (100)")
-            fig.update_layout(
-                title=f"{res['name']} 건설공사비지수 시계열",
-                xaxis=dict(rangeslider=dict(visible=True, thickness=0.05)),
-                yaxis_title="지수 (2020=100)", height=480, hovermode="x unified",
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-            # 환산 요약 표
-            st.markdown(
-                f"| 항목 | 값 |\n|---|---|\n"
-                f"| 공종 | {res['name']} (`{res['code']}`) |\n"
-                f"| 기준 {res['base']} 지수 | {res['base_idx']:.2f} |\n"
-                f"| 목표 {res['target']} 지수 | {res['target_idx']:.2f} |\n"
-                f"| 보정계수 | {res['factor']:.4f} |\n"
-                f"| 원금 | {res['cost']:,.1f} 억원 |\n"
-                f"| **환산 공사비** | **{res['adjusted']:,.1f} 억원** ({(res['factor']-1)*100:+.2f}%) |"
-            )
-
-            # 내보내기
-            st.markdown("##### 📤 내보내기")
-            ex1, ex2 = st.columns(2)
-            with ex1:
-                pdf_bytes = generate_pdf_report(
-                    title=f"공사비 물가보정 리포트 — {res['name']}",
-                    summary={
-                        "공종": res["name"],
-                        "기준 시점": res["base"],
-                        "목표 시점": res["target"],
-                        "기준 지수": f"{res['base_idx']:.2f}",
-                        "목표 지수": f"{res['target_idx']:.2f}",
-                        "보정계수": f"{res['factor']:.4f}",
-                        "원금": f"{res['cost']:,.1f} 억원",
-                        "환산 공사비": f"{res['adjusted']:,.1f} 억원",
-                        "증감": f"{res['diff']:+,.1f} 억원 ({(res['factor']-1)*100:+.2f}%)",
-                    },
-                    body_text=(
-                        f"{res['base']} 기준 {res['cost']:,.1f}억원의 {res['name']} 공사비를 "
-                        f"{res['target']} 현재가치로 환산한 결과입니다. "
-                        f"건설공사비지수가 {res['base_idx']:.2f}에서 {res['target_idx']:.2f}로 변동하여 "
-                        f"보정계수 {res['factor']:.4f}가 적용되었으며, "
-                        f"환산 공사비는 {res['adjusted']:,.1f}억원입니다."
-                    ),
-                    table_df=df_full[["TIME", "DATA_VALUE"]].rename(
-                        columns={"TIME": "시점", "DATA_VALUE": "지수"}
-                    ),
-                )
-                st.download_button(
-                    "📄 PDF 다운로드", pdf_bytes,
-                    f"공사비보정_{res['base']}_{res['target']}.pdf",
-                    "application/pdf", use_container_width=True, key="cci_pdf",
-                )
-            with ex2:
-                xlsx = to_excel_bytes({
-                    "요약": pd.DataFrame([{"항목": k, "값": v} for k, v in {
-                        "공종": res["name"], "원금(억)": res["cost"],
-                        "환산공사비(억)": res["adjusted"], "보정계수": res["factor"],
-                        "기준시점": res["base"], "목표시점": res["target"],
-                    }.items()]),
-                    "건설공사비지수": df_full[["TIME", "DATA_VALUE"]],
-                })
-                st.download_button(
-                    "📊 Excel 다운로드", xlsx,
-                    f"공사비보정_{res['base']}_{res['target']}.xlsx",
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True, key="cci_xlsx",
-                )
-        except Exception as e:
-            st.warning(f"차트 생성 실패: {e}")
+    st.caption(
+        "참고: 본 기능은 내부 투자비 추정·검토용입니다. 「국가계약법」상 계약금액조정(물가변동) "
+        "산식과는 다르므로, 공식 계약 근거로 사용하지 마십시오."
+    )
 
 
 # ═══════════════════════════════════════════
@@ -939,13 +761,7 @@ with tab_cci:
 with tab_multi:
     st.markdown(section_title("📊 여러 설비 PPI 동시 비교"), unsafe_allow_html=True)
 
-    if use_demo:
-        st.warning("DEMO 모드에서는 제한. LIVE로 전환하세요.")
-        selected_rows = []
-    elif not os.getenv("ECOS_API_KEY"):
-        st.warning("ECOS Key 필요")
-        selected_rows = []
-    else:
+    if True:
         catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
         if catalog is None or len(catalog) == 0:
             st.error("카탈로그 로드 실패")
@@ -1284,7 +1100,7 @@ with tab_port:
     ])
 
     # 사용자가 카탈로그에서 골라 채우도록 지원
-    if not use_demo and os.getenv("ECOS_API_KEY"):
+    if os.getenv("ECOS_API_KEY"):
         catalog_all = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
         if catalog_all is not None and len(catalog_all) > 0:
             with st.expander("➕ ECOS 카탈로그에서 빠르게 추가"):
@@ -1333,12 +1149,10 @@ with tab_port:
         st.success(f"✅ 비중 합계: {total_pct:.1f}%")
 
     if st.button("🚀 포트폴리오 환산 실행", type="primary", key="port_btn"):
-        if not use_demo and not os.getenv("ECOS_API_KEY"):
-            st.error("LIVE 모드에서는 ECOS Key 필요")
-        else:
+        if True:
             try:
                 client = get_client()
-                catalog_p = get_catalog(api_key=os.getenv("ECOS_API_KEY")) if not use_demo else None
+                catalog_p = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
 
                 results = []
                 for _, row in portfolio_df.iterrows():
@@ -1976,11 +1790,11 @@ with tab_share:
     with st.container():
         st.markdown("#### 💾 현재 세션 요약")
         session_summary = {
-            "실행 모드": "DEMO" if use_demo else "LIVE (ECOS)",
+            "데이터 소스": "한국은행 ECOS (LIVE)",
             "ECOS Key": "✅ 설정됨" if os.getenv("ECOS_API_KEY") else "❌ 없음",
             "카탈로그": f"{len(get_catalog(api_key=os.getenv('ECOS_API_KEY'))):,}개"
-                         if (not use_demo and os.getenv("ECOS_API_KEY")) else "DEMO",
-            "LLM": llm_provider if not use_demo else "DEMO (None)",
+                         if os.getenv("ECOS_API_KEY") else "미연결",
+            "LLM": llm_provider,
             "Tab 3 비교 결과": "✅ 저장됨" if "multi_series" in st.session_state else "❌ 없음",
             "Tab 5 포트폴리오": "✅ 저장됨" if "port_results" in st.session_state else "❌ 없음",
         }
@@ -1994,9 +1808,9 @@ st.divider()
 st.markdown(
     f"""
     <div style="text-align:center; color:#94A3B8; font-size:12px; padding:20px 0;">
-        🏭 <b>POSCO 투자비 물가보정 AI Agent v8</b> · 한국은행 ECOS API 기반 · 교육용 데모
+        🏭 <b>POSCO 투자비 물가보정 시스템</b> · 한국은행 ECOS 생산자물가지수 기반
         <br>
-        <span style="font-size:11px;">© 2026 포스코 투자엔지니어링실</span>
+        <span style="font-size:11px;">© 2026 포스코 투자엔지니어링실 · 내부 검토용</span>
     </div>
     """,
     unsafe_allow_html=True,

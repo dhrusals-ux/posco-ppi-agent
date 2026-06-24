@@ -1,0 +1,7 @@
+
+# ── 보안: 인증키 파일 절대 커밋 금지 ──
+.streamlit/secrets.toml
+*.secrets.toml
+.env
+.env.*
+!.env.example
