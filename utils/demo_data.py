@@ -147,3 +147,101 @@ class DemoECOSClient:
             df["ITEM_CODE"] = code
             frames.append(df)
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+# ═══════════════════════════════════════════════════════
+# 건설공사비지수 DEMO (KOSIS 모방)
+# ═══════════════════════════════════════════════════════
+
+# 공종별 특성. 건설공사비는 인건비·자재비 비중이 커서 PPI보다 완만하지만
+# 2021~2022 자재대란기에 가파르게 상승한 패턴이 특징.
+CONSTRUCTION_PROFILES = {
+    "C_TOTAL":    {"annual_growth": 0.038, "volatility": 0.012, "seasonal": 0.005},
+    "C_CIVIL":    {"annual_growth": 0.040, "volatility": 0.014, "seasonal": 0.006},
+    "C_BUILD":    {"annual_growth": 0.037, "volatility": 0.013, "seasonal": 0.005},
+    "C_RESID":    {"annual_growth": 0.036, "volatility": 0.013, "seasonal": 0.005},
+    "C_NONRESID": {"annual_growth": 0.039, "volatility": 0.015, "seasonal": 0.006},
+    "C_PLANT":    {"annual_growth": 0.043, "volatility": 0.018, "seasonal": 0.007},
+    "C_STEEL":    {"annual_growth": 0.050, "volatility": 0.026, "seasonal": 0.010},  # 철강 민감
+    "C_ELEC":     {"annual_growth": 0.034, "volatility": 0.016, "seasonal": 0.007},
+}
+
+
+def generate_construction_series(
+    item_code: str,
+    start: str,
+    end: str,
+    base_index_2020: float = 100.0,
+) -> pd.DataFrame:
+    """공종별 가상 건설공사비지수 시계열 생성 (2020=100)."""
+    profile = CONSTRUCTION_PROFILES.get(item_code, DEFAULT_PROFILE)
+
+    seed = sum(ord(c) for c in item_code) % 10000 + 7  # ECOS와 seed 분리
+    rng = np.random.default_rng(seed)
+
+    start_dt = pd.to_datetime(start, format="%Y%m")
+    end_dt = pd.to_datetime(end, format="%Y%m")
+    dates = pd.date_range(start=start_dt, end=end_dt, freq="MS")
+    if len(dates) == 0:
+        raise ValueError(f"유효한 기간이 아닙니다: {start} ~ {end}")
+
+    base_2020 = pd.Timestamp("2020-01-01")
+    months_from_base = np.array([
+        (d.year - base_2020.year) * 12 + (d.month - base_2020.month)
+        for d in dates
+    ])
+
+    monthly_growth = (1 + profile["annual_growth"]) ** (1 / 12) - 1
+    trend = base_index_2020 * (1 + monthly_growth) ** months_from_base
+
+    # 건설은 계절성이 약함
+    seasonal = 1 + profile["seasonal"] * np.sin(
+        2 * np.pi * np.array([d.month for d in dates]) / 12
+    )
+
+    noise = rng.normal(0, profile["volatility"], len(dates))
+    noise_smooth = pd.Series(noise).rolling(window=4, min_periods=1).mean().values
+    random_factor = 1 + noise_smooth
+
+    # 2021~2022 자재대란 급등 반영
+    event_factor = np.ones(len(dates))
+    for i, d in enumerate(dates):
+        y, m = d.year, d.month
+        if y == 2020 and 3 <= m <= 7:
+            event_factor[i] *= 0.995          # COVID 일시 둔화
+        elif y == 2021:
+            event_factor[i] *= 1.0 + 0.02 * profile["volatility"] * 12
+        elif y == 2022:
+            event_factor[i] *= 1.0 + 0.03 * profile["volatility"] * 12  # 자재대란 정점
+        elif y == 2023:
+            event_factor[i] *= 1.005          # 고점 유지
+
+    values = trend * seasonal * random_factor * event_factor
+
+    return pd.DataFrame({
+        "TIME": [d.strftime("%Y%m") for d in dates],
+        "ITEM_NAME1": [f"[DEMO] 건설공사비 {item_code}"] * len(dates),
+        "DATA_VALUE": np.round(values, 2),
+    })
+
+
+class DemoKOSISClient:
+    """KOSISClient와 동일한 인터페이스의 데모 클라이언트 (건설공사비지수)"""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def get_ppi(self, item_code, start, end, cycle="M"):
+        return generate_construction_series(item_code, start, end)
+
+    def get_ppi_at(self, item_code, period, cycle="M"):
+        df = generate_construction_series(item_code, period, period)
+        return float(df["DATA_VALUE"].iloc[0])
+
+    def get_multi_items(self, item_codes, start, end, cycle="M"):
+        frames = []
+        for code in item_codes:
+            df = self.get_ppi(code, start, end)
+            df["ITEM_CODE"] = code
+            frames.append(df)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()

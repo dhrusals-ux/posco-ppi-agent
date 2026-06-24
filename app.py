@@ -14,9 +14,11 @@ import plotly.express as px
 
 from agents.ppi_agent import run_ppi_agent
 from utils.ecos_client import ECOSClient
-from utils.demo_data import DemoECOSClient
+from utils.demo_data import DemoECOSClient, DemoKOSISClient
+from utils.kosis_client import KOSISClient
 from utils.ecos_catalog import get_catalog
 from data.ppi_categories import CATEGORY_FILTERS, filter_catalog_by_category
+from data.construction_categories import get_all_construction_items, find_construction_by_code
 from utils.theme import (
     inject_theme, kpi_card, hero_header, section_title, live_badge,
     POSCO_COLORS, SERIES_COLORS, plotly_template,
@@ -45,6 +47,13 @@ def get_client():
     if st.session_state.get("use_demo", True):
         return DemoECOSClient()
     return ECOSClient()
+
+
+def get_construction_client():
+    """현재 모드에 따른 KOSIS(건설공사비지수) 클라이언트"""
+    if st.session_state.get("use_demo", True):
+        return DemoKOSISClient()
+    return KOSISClient()
 
 
 # ═══════════════════════════════════════════
@@ -94,6 +103,19 @@ with st.sidebar:
             os.environ["ECOS_API_KEY"] = cleaned
             if cleaned != ecos_key:
                 st.warning(f"⚠️ 따옴표/공백 정리: {len(ecos_key)}→{len(cleaned)}자")
+
+        # 🏗️ KOSIS (건설공사비지수)
+        try:
+            default_kosis = st.secrets["KOSIS_API_KEY"]
+        except Exception:
+            default_kosis = os.getenv("KOSIS_API_KEY", "")
+        kosis_key = st.text_input(
+            "KOSIS API Key (공사비)", type="password", value=default_kosis,
+            help="건설공사비지수 조회용 · kosis.kr 공유서비스에서 무료 발급",
+        )
+        if kosis_key:
+            ck = kosis_key.strip().strip('"').strip("'").strip()
+            os.environ["KOSIS_API_KEY"] = ck
 
         st.markdown("##### 🧠 LLM")
         llm_choice = st.radio(
@@ -234,9 +256,11 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ═══════════════════════════════════════════
 # 탭 정의 (7개)
 # ═══════════════════════════════════════════
-tab_ai, tab_ppi, tab_multi, tab_scn, tab_port, tab_heat, tab_share = st.tabs([
+(tab_ai, tab_ppi, tab_cci, tab_multi, tab_scn,
+ tab_port, tab_heat, tab_share) = st.tabs([
     "🤖 AI Agent 환산",
     "🔍 설비별 PPI 조회",
+    "🏗️ 공사비 물가보정",
     "📊 다중 설비 비교",
     "🧪 시나리오 분석",
     "📦 포트폴리오 환산",
@@ -717,6 +741,196 @@ with tab_ppi:
                                        use_container_width=True)
             except Exception as e:
                 st.error(f"조회 실패: {e}")
+
+
+# ═══════════════════════════════════════════
+# Tab: 🏗️ 공사비 물가보정 (KOSIS 건설공사비지수)
+# ═══════════════════════════════════════════
+with tab_cci:
+    st.markdown(section_title("🏗️ 건설공사비지수 기반 공사비 환산"), unsafe_allow_html=True)
+    st.caption(
+        "한국건설기술연구원 건설공사비지수(KOSIS, 2020=100)로 과거 공사비를 현재가치로 환산합니다. "
+        "설비비(ECOS PPI)와 달리 인건비·자재비가 반영된 건설 공종 지수입니다."
+    )
+
+    if use_demo:
+        st.info("📦 DEMO 모드 — 가상 건설공사비지수로 동작합니다.")
+    elif not os.getenv("KOSIS_API_KEY"):
+        st.warning("⚠️ LIVE 모드에서 공사비 환산을 쓰려면 사이드바에 **KOSIS API Key**가 필요합니다.")
+
+    # 공종 선택
+    items = get_all_construction_items()
+    labels = [f"{it['icon']} {it['name']}" for it in items]
+    col_sel, col_code = st.columns([2, 1])
+    with col_sel:
+        sel_label = st.selectbox("🏗️ 공종 선택", labels, key="cci_sel")
+        sel_idx = labels.index(sel_label)
+        cci_code = items[sel_idx]["code"]
+        cci_name = items[sel_idx]["name"]
+    with col_code:
+        override_cci = st.text_input(
+            "⚙️ 강제 공종코드(objL1)", "",
+            help="LIVE 연동 시 실제 KOSIS objL1 코드로 덮어쓰기",
+            key="cci_override",
+        )
+        if override_cci.strip():
+            cci_code = override_cci.strip()
+
+    st.caption(f"📌 **{cci_name}** · 공종코드 `{cci_code}` · {items[sel_idx]['desc']}")
+
+    # 입력: 원금 + 기준/목표 시점
+    i1, i2, i3 = st.columns(3)
+    cci_cost = i1.number_input("💰 공사 원금 (억원)", 0.0, 1_000_000.0, 500.0, step=10.0, key="cci_cost")
+    cci_base = i2.text_input("기준 시점 (YYYYMM)", "202001", key="cci_base")
+    cci_target = i3.text_input("목표 시점 (YYYYMM)", "202604", key="cci_target")
+
+    if st.button("🏗️ 공사비 환산 실행", type="primary", use_container_width=True, key="cci_run"):
+        try:
+            client = get_construction_client()
+            base_idx = client.get_ppi_at(cci_code, cci_base)
+            target_idx = client.get_ppi_at(cci_code, cci_target)
+            factor = target_idx / base_idx
+            adjusted = cci_cost * factor
+            diff = adjusted - cci_cost
+
+            st.session_state["cci_result"] = {
+                "code": cci_code, "name": cci_name,
+                "cost": cci_cost, "base": cci_base, "target": cci_target,
+                "base_idx": base_idx, "target_idx": target_idx,
+                "factor": factor, "adjusted": adjusted, "diff": diff,
+            }
+        except Exception as e:
+            st.error(f"❌ 환산 실패: {e}")
+            st.session_state.pop("cci_result", None)
+
+    # 결과 렌더 (세션 유지)
+    if "cci_result" in st.session_state:
+        res = st.session_state["cci_result"]
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown(kpi_card("원금", f"{res['cost']:,.0f} 억",
+                                 delta=res["base"], icon="💰"), unsafe_allow_html=True)
+        with c2:
+            st.markdown(kpi_card("보정계수", f"{res['factor']:.4f}",
+                                 delta=f"{(res['factor']-1)*100:+.2f}%",
+                                 delta_type="up" if res["factor"] > 1 else "down",
+                                 icon="⚖️"), unsafe_allow_html=True)
+        with c3:
+            st.markdown(kpi_card("증감액", f"{res['diff']:+,.1f} 억",
+                                 delta="현재가 기준",
+                                 delta_type="up" if res["diff"] > 0 else "down",
+                                 icon="📊"), unsafe_allow_html=True)
+        with c4:
+            st.markdown(kpi_card("환산 공사비", f"{res['adjusted']:,.1f} 억",
+                                 delta=res["target"], delta_type="neutral",
+                                 icon="🎯", highlight=True), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(section_title("📈 건설공사비지수 추이"), unsafe_allow_html=True)
+        try:
+            client = get_construction_client()
+            df_full = client.get_ppi(res["code"], "201501", res["target"])
+            df_full["TIME_DT"] = pd.to_datetime(df_full["TIME"], format="%Y%m")
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=df_full["TIME_DT"], y=df_full["DATA_VALUE"],
+                mode="lines", name="건설공사비지수",
+                line=dict(color=POSCO_COLORS["accent"], width=2.5),
+                fill="tozeroy", fillcolor="rgba(242,159,5,0.08)",
+                hovertemplate="<b>%{x|%Y년 %m월}</b><br>지수: %{y:.2f}<extra></extra>",
+            ))
+
+            def _mark_cci(period, label, color):
+                try:
+                    t = pd.to_datetime(period, format="%Y%m")
+                    v = df_full[df_full["TIME"] == period]["DATA_VALUE"]
+                    if len(v) > 0:
+                        fig.add_trace(go.Scatter(
+                            x=[t], y=[float(v.iloc[0])],
+                            mode="markers+text",
+                            marker=dict(size=14, color=color, line=dict(color="white", width=2)),
+                            text=[label], textposition="top center",
+                            textfont=dict(size=11, color=color), showlegend=False,
+                        ))
+                except Exception:
+                    pass
+
+            _mark_cci(res["base"], "📍 기준", POSCO_COLORS["primary"])
+            _mark_cci(res["target"], "🎯 목표", POSCO_COLORS["danger"])
+
+            fig.add_hline(y=100, line_dash="dash", line_color=POSCO_COLORS["neutral_500"],
+                          annotation_text="2020 기준 (100)")
+            fig.update_layout(
+                title=f"{res['name']} 건설공사비지수 시계열",
+                xaxis=dict(rangeslider=dict(visible=True, thickness=0.05)),
+                yaxis_title="지수 (2020=100)", height=480, hovermode="x unified",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # 환산 요약 표
+            st.markdown(
+                f"| 항목 | 값 |\n|---|---|\n"
+                f"| 공종 | {res['name']} (`{res['code']}`) |\n"
+                f"| 기준 {res['base']} 지수 | {res['base_idx']:.2f} |\n"
+                f"| 목표 {res['target']} 지수 | {res['target_idx']:.2f} |\n"
+                f"| 보정계수 | {res['factor']:.4f} |\n"
+                f"| 원금 | {res['cost']:,.1f} 억원 |\n"
+                f"| **환산 공사비** | **{res['adjusted']:,.1f} 억원** ({(res['factor']-1)*100:+.2f}%) |"
+            )
+
+            # 내보내기
+            st.markdown("##### 📤 내보내기")
+            ex1, ex2 = st.columns(2)
+            with ex1:
+                pdf_bytes = generate_pdf_report(
+                    title=f"공사비 물가보정 리포트 — {res['name']}",
+                    summary={
+                        "공종": res["name"],
+                        "기준 시점": res["base"],
+                        "목표 시점": res["target"],
+                        "기준 지수": f"{res['base_idx']:.2f}",
+                        "목표 지수": f"{res['target_idx']:.2f}",
+                        "보정계수": f"{res['factor']:.4f}",
+                        "원금": f"{res['cost']:,.1f} 억원",
+                        "환산 공사비": f"{res['adjusted']:,.1f} 억원",
+                        "증감": f"{res['diff']:+,.1f} 억원 ({(res['factor']-1)*100:+.2f}%)",
+                    },
+                    body_text=(
+                        f"{res['base']} 기준 {res['cost']:,.1f}억원의 {res['name']} 공사비를 "
+                        f"{res['target']} 현재가치로 환산한 결과입니다. "
+                        f"건설공사비지수가 {res['base_idx']:.2f}에서 {res['target_idx']:.2f}로 변동하여 "
+                        f"보정계수 {res['factor']:.4f}가 적용되었으며, "
+                        f"환산 공사비는 {res['adjusted']:,.1f}억원입니다."
+                    ),
+                    table_df=df_full[["TIME", "DATA_VALUE"]].rename(
+                        columns={"TIME": "시점", "DATA_VALUE": "지수"}
+                    ),
+                )
+                st.download_button(
+                    "📄 PDF 다운로드", pdf_bytes,
+                    f"공사비보정_{res['base']}_{res['target']}.pdf",
+                    "application/pdf", use_container_width=True, key="cci_pdf",
+                )
+            with ex2:
+                xlsx = to_excel_bytes({
+                    "요약": pd.DataFrame([{"항목": k, "값": v} for k, v in {
+                        "공종": res["name"], "원금(억)": res["cost"],
+                        "환산공사비(억)": res["adjusted"], "보정계수": res["factor"],
+                        "기준시점": res["base"], "목표시점": res["target"],
+                    }.items()]),
+                    "건설공사비지수": df_full[["TIME", "DATA_VALUE"]],
+                })
+                st.download_button(
+                    "📊 Excel 다운로드", xlsx,
+                    f"공사비보정_{res['base']}_{res['target']}.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True, key="cci_xlsx",
+                )
+        except Exception as e:
+            st.warning(f"차트 생성 실패: {e}")
 
 
 # ═══════════════════════════════════════════
