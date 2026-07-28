@@ -22,7 +22,7 @@ from utils.forecast import forecast_index, MAX_HORIZON
 from utils.monitor import build_monitor
 from utils.batch_adjust import (
     read_table, guess_columns, suggest_matches, approval_blockers,
-    run_batch, summarize, MAX_ROWS,
+    run_batch, summarize, MAX_ROWS, fmt_eok, eok_unit,
     CONF_HIGH, CONF_MEDIUM, CONF_LOW, CONF_NONE, CONF_ICON,
 )
 from data.steel_plant_items import STEEL_PLANT_ITEMS, get_processes, get_all_items_flat
@@ -82,7 +82,7 @@ with st.sidebar:
     use_demo = False
     st.session_state["use_demo"] = False
 
-    st.markdown("### 🔑 데이터 연결")
+    st.markdown("### 데이터 연결")
 
     # ── ECOS 키: secrets 우선, 없으면 입력란 폴백 ──
     ecos_from_secrets = ""
@@ -127,7 +127,7 @@ with st.sidebar:
     st.divider()
 
     # ── LLM (자연어 파싱 고도화, 선택) ──
-    st.markdown("### 🧠 자연어 파싱 LLM")
+    st.markdown("### 자연어 파싱 LLM")
     st.caption("미설정 시 규칙 기반 파서로 동작합니다.")
     llm_choice = st.radio(
         "LLM 선택",
@@ -171,7 +171,7 @@ with st.sidebar:
         llm_provider = "none"
 
     st.divider()
-    st.markdown("### 🗂️ ECOS 품목 카탈로그")
+    st.markdown("### ECOS 품목 카탈로그")
     if os.getenv("ECOS_API_KEY"):
         try:
             catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
@@ -188,7 +188,7 @@ with st.sidebar:
         st.caption("ECOS 연결 후 품목 카탈로그가 표시됩니다.")
 
     st.divider()
-    st.markdown("### 📖 소개")
+    st.markdown("### 소개")
     st.caption(
         "**POSCO 투자엔지니어링실 투자비 물가보정 도구**\n\n"
         "한국은행 ECOS 생산자물가지수(PPI)로 과거 설비 투자비를 "
@@ -203,8 +203,9 @@ with st.sidebar:
 # ═══════════════════════════════════════════
 st.markdown(
     hero_header(
-        "🏭 POSCO 투자비 물가보정 시스템",
-        "한국은행 ECOS 생산자물가지수 기반 설비 투자비 현재가치 환산 — 투자엔지니어링실 실무 도구",
+        "POSCO 투자비 물가보정 시스템",
+        "한국은행 ECOS 생산자물가지수(설비비) · 한국건설기술연구원 건설공사비지수(공사비) "
+        "실시간 조회 기반 현재가치 환산 — 투자엔지니어링실 내부 검토용",
     ),
     unsafe_allow_html=True,
 )
@@ -285,17 +286,17 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ═══════════════════════════════════════════
 (tab_mon, tab_ai, tab_batch, tab_ppi, tab_cci, tab_multi, tab_scn,
  tab_port, tab_heat, tab_fcst, tab_share) = st.tabs([
-    "📡 품목 모니터링",
-    "🤖 AI Agent 환산",
-    "📑 엑셀 일괄 보정",
-    "🔍 설비별 PPI 조회",
-    "🏗️ 공사비 물가보정",
-    "📊 다중 설비 비교",
-    "🧪 시나리오 분석",
-    "📦 포트폴리오 환산",
-    "🗺️ 히트맵 & 상관관계",
-    "🔮 물가 예측",
-    "🔗 공유/내보내기",
+    "품목 모니터링",
+    "AI Agent 환산",
+    "엑셀 일괄 보정",
+    "설비별 PPI 조회",
+    "공사비 물가보정",
+    "다중 설비 비교",
+    "시나리오 분석",
+    "포트폴리오 환산",
+    "히트맵 & 상관관계",
+    "물가 예측",
+    "공유/내보내기",
 ])
 
 
@@ -304,7 +305,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ═══════════════════════════════════════════
 def period_preset_buttons(key_prefix: str, default_start="201501", default_end="202612"):
     """기간 프리셋 버튼 + 시작/종료 입력 (프리셋 클릭 시 즉시 반영)"""
-    st.markdown("##### 📅 기간 설정")
+    st.markdown("##### 기간 설정")
 
     start_key = f"{key_prefix}_start_input"
     end_key = f"{key_prefix}_end_input"
@@ -359,7 +360,7 @@ def period_preset_buttons(key_prefix: str, default_start="201501", default_end="
 # Tab: \U0001F4E1 품목 모니터링 (철강 플랜트 공정별)
 # =========================================================
 with tab_mon:
-    st.markdown(section_title("\U0001F4E1 철강 플랜트 설비 품목 물가 모니터링"), unsafe_allow_html=True)
+    st.markdown(section_title("철강 플랜트 설비 품목 물가 모니터링"), unsafe_allow_html=True)
     st.caption(
         "한국은행 ECOS 생산자물가지수를 자동으로 불러와 공정별 주요 설비 품목의 월별 추이를 "
         "한눈에 확인합니다. **매월 ECOS 발표가 반영되므로 수동 업데이트가 필요 없습니다.**"
@@ -431,7 +432,7 @@ with tab_mon:
                                      icon="\U0001F4CA", highlight=True), unsafe_allow_html=True)
 
                 st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(section_title("\U0001F4CB 품목별 현황"), unsafe_allow_html=True)
+                st.markdown(section_title("품목별 현황"), unsafe_allow_html=True)
 
                 def _arrow(v):
                     if v is None:
@@ -472,7 +473,7 @@ with tab_mon:
 
                 # 추이 차트
                 st.markdown("<br>", unsafe_allow_html=True)
-                st.markdown(section_title("\U0001F4C8 품목별 월별 추이"), unsafe_allow_html=True)
+                st.markdown(section_title("품목별 월별 추이"), unsafe_allow_html=True)
 
                 pick = st.multiselect(
                     "차트에 표시할 품목 (최대 6개 권장)",
@@ -521,7 +522,7 @@ with tab_mon:
 # Tab 1: AI Agent 환산
 # ═══════════════════════════════════════════
 with tab_ai:
-    st.markdown(section_title("🤖 자연어 입력 → 자동 환산"), unsafe_allow_html=True)
+    st.markdown(section_title("자연어 입력 → 자동 환산"), unsafe_allow_html=True)
 
     examples = [
         "(직접 입력)",
@@ -620,7 +621,7 @@ with tab_ai:
             st.markdown("<br>", unsafe_allow_html=True)
 
             # PPI 추이 차트 (rangeslider + fill)
-            st.markdown(section_title("📈 PPI 추이 분석"), unsafe_allow_html=True)
+            st.markdown(section_title("PPI 추이 분석"), unsafe_allow_html=True)
             try:
                 client = get_client()
                 df_full = client.get_ppi(
@@ -670,11 +671,11 @@ with tab_ai:
                 st.plotly_chart(fig, use_container_width=True)
 
                 # 보고서
-                st.markdown(section_title("📝 AI 분석 보고서"), unsafe_allow_html=True)
+                st.markdown(section_title("AI 분석 보고서"), unsafe_allow_html=True)
                 st.markdown(result["report"])
 
                 # 내보내기
-                st.markdown("##### 📤 내보내기")
+                st.markdown("##### 내보내기")
                 ex1, ex2, ex3 = st.columns(3)
                 with ex1:
                     pdf_bytes = generate_pdf_report(
@@ -739,7 +740,7 @@ with tab_ai:
             # 🆕 상승 원인 분석 (Gemini)
             # ───────────────────────────────────────────
             st.markdown("---")
-            st.markdown("### 📰 상승 원인 분석 (AI)")
+            st.markdown("### 상승 원인 분석 (AI)")
             st.caption("Gemini가 PPI 추이와 거시경제 이벤트를 연결해 왜 움직였는지 해설합니다.")
 
             if st.button("🧠 Gemini로 원인 분석 실행", key="explain_btn", use_container_width=True):
@@ -800,7 +801,7 @@ with tab_ai:
 # Tab: 📑 엑셀 일괄 보정 (견적서 → 자동제안 → 사람확인 → 승인 → 환산)
 # ═══════════════════════════════════════════
 with tab_batch:
-    st.markdown(section_title("📑 견적 엑셀 일괄 물가보정"), unsafe_allow_html=True)
+    st.markdown(section_title("견적 엑셀 일괄 물가보정"), unsafe_allow_html=True)
     st.caption(
         "투자비 견적 엑셀을 올리면 각 행의 품목명을 ECOS 품목으로 **자동 제안**하고, "
         "사람이 확인·승인한 뒤 전체를 일괄 환산합니다."
@@ -834,7 +835,7 @@ with tab_batch:
             return code.strip(), name.strip()
 
         # ── 1) 업로드
-        st.markdown("#### 1️⃣ 견적 엑셀 업로드")
+        st.markdown("#### 1. 견적 엑셀 업로드")
         _bat_sample = to_excel_bytes({
             "견적서": pd.DataFrame({
                 "품목명": ["냉각수 순환펌프 1식", "주변압기 154kV", "형강 H-300x300"],
@@ -874,7 +875,7 @@ with tab_batch:
                     st.dataframe(_bat_raw.head(10), use_container_width=True)
 
                 # ── 2) 컬럼 지정
-                st.markdown("#### 2️⃣ 컬럼 지정")
+                st.markdown("#### 2. 컬럼 지정")
                 _g_item, _g_amt = guess_columns(_bat_raw)
                 _cols = list(_bat_raw.columns)
                 cc1, cc2 = st.columns(2)
@@ -917,7 +918,7 @@ with tab_batch:
                 if "bat_review" in st.session_state:
                     _rev = st.session_state["bat_review"]
 
-                    st.markdown("#### 3️⃣ 매칭 검토 · 수정")
+                    st.markdown("#### 3. 매칭 검토 · 수정")
                     n_hi = int((_rev["신뢰도"] == CONF_HIGH).sum())
                     n_mid = int((_rev["신뢰도"] == CONF_MEDIUM).sum())
                     n_lo = int((_rev["신뢰도"] == CONF_LOW).sum())
@@ -972,7 +973,7 @@ with tab_batch:
                     st.session_state["bat_review"] = _rev2
 
                     # ── 4) 시점 + 승인 게이트
-                    st.markdown("#### 4️⃣ 기준·목표 시점")
+                    st.markdown("#### 4. 기준·목표 시점")
                     _dflt_target = (datetime.now() - timedelta(days=60)).strftime("%Y%m")
                     p1, p2 = st.columns(2)
                     with p1:
@@ -987,7 +988,7 @@ with tab_batch:
                     if not re.fullmatch(r"\d{6}", str(_bat_target) or ""):
                         _blockers.append("목표시점 형식이 YYYYMM이 아닙니다.")
 
-                    st.markdown("#### 5️⃣ 승인 후 실행")
+                    st.markdown("#### 5. 승인 후 실행")
                     if _blockers:
                         st.error(
                             "**아래를 해결해야 실행할 수 있습니다** — 확인되지 않은 매칭으로 "
@@ -1024,21 +1025,38 @@ with tab_batch:
                     _sm = summarize(_res)
 
                     st.divider()
-                    st.markdown("#### 6️⃣ 보정 결과")
+                    st.markdown("#### 6. 보정 결과")
 
+                    # 화면은 억 단위로 읽기 쉽게, 원 단위 전체를 바로 아래 병기.
+                    # 억 표시는 반올림되므로 근거로 쓸 값은 원 단위 병기·엑셀을 봐야 한다.
                     r1, r2, r3, r4 = st.columns(4)
                     with r1:
-                        st.markdown(kpi_card("원금 합계", f"{_sm['원금합계']:,.0f}원"), unsafe_allow_html=True)
+                        st.markdown(kpi_card(
+                            "원금 합계", fmt_eok(_sm["원금합계"]),
+                            unit=eok_unit(_sm["원금합계"]),
+                            sub=f"{_sm['원금합계']:,.0f}원",
+                        ), unsafe_allow_html=True)
                     with r2:
-                        st.markdown(kpi_card("환산 합계", f"{_sm['환산합계']:,.0f}원", highlight=True), unsafe_allow_html=True)
+                        st.markdown(kpi_card(
+                            "환산 합계", fmt_eok(_sm["환산합계"]),
+                            unit=eok_unit(_sm["환산합계"]),
+                            sub=f"{_sm['환산합계']:,.0f}원",
+                            highlight=True,
+                        ), unsafe_allow_html=True)
                     with r3:
                         _d = _sm["증감률(%)"]
                         st.markdown(kpi_card(
-                            "증감률", f"{_d:+.2f}%" if _d is not None else "—",
+                            "증감률", f"{_d:+.2f}" if _d is not None else "—",
+                            unit="%" if _d is not None else None,
+                            sub=f"증감 {_sm['증감액']:,.0f}원",
                             delta_type="up" if (_d or 0) > 0 else "down",
                         ), unsafe_allow_html=True)
                     with r4:
-                        st.markdown(kpi_card("성공 / 실패", f"{_sm['성공']} / {_sm['실패']}"), unsafe_allow_html=True)
+                        st.markdown(kpi_card(
+                            "환산 성공", f"{_sm['성공']}",
+                            unit=f"/ {_sm['건수']}건",
+                            sub=f"실패 {_sm['실패']}건 · 저신뢰 {_sm['저신뢰건수']}건",
+                        ), unsafe_allow_html=True)
 
                     if _sm["실패"]:
                         st.warning(
@@ -1046,7 +1064,21 @@ with tab_batch:
                             "총액이 견적 전체와 다릅니다. '오류' 열을 확인하세요."
                         )
 
-                    st.dataframe(_res, use_container_width=True, hide_index=True)
+                    # 금액은 천단위 구분, 지수·계수는 소수 자리를 고정해 자리를 맞춘다
+                    st.dataframe(
+                        _res, use_container_width=True, hide_index=True,
+                        column_config={
+                            "행": st.column_config.NumberColumn("엑셀행", width="small"),
+                            "원금": st.column_config.NumberColumn("원금(원)", format="localized"),
+                            "환산액": st.column_config.NumberColumn("환산액(원)", format="localized"),
+                            "증감액": st.column_config.NumberColumn("증감액(원)", format="localized"),
+                            "기준지수": st.column_config.NumberColumn("기준지수", format="%.2f"),
+                            "목표지수": st.column_config.NumberColumn("목표지수", format="%.2f"),
+                            "보정계수": st.column_config.NumberColumn("보정계수", format="%.4f"),
+                            "증감률(%)": st.column_config.NumberColumn("증감률(%)", format="%.2f"),
+                            "오류": st.column_config.TextColumn("오류", width="large"),
+                        },
+                    )
 
                     _disc = (
                         "본 결과는 내부 투자비 추정·검토용이며, 「국가계약법」상 계약금액조정(물가변동) "
@@ -1083,7 +1115,7 @@ with tab_batch:
 # Tab 2: 설비별 PPI 조회
 # ═══════════════════════════════════════════
 with tab_ppi:
-    st.markdown(section_title("🔍 ECOS 품목 단일 조회"), unsafe_allow_html=True)
+    st.markdown(section_title("ECOS 품목 단일 조회"), unsafe_allow_html=True)
 
     if True:
         mode = st.radio(
@@ -1218,7 +1250,7 @@ with tab_ppi:
 # Tab: 🏗️ 공사비 물가보정 (KOSIS 건설공사비지수)
 # ═══════════════════════════════════════════
 with tab_cci:
-    st.markdown(section_title("\U0001F3D7\uFE0F 공사비 물가보정 (건설공사비지수)"), unsafe_allow_html=True)
+    st.markdown(section_title("공사비 물가보정 (건설공사비지수)"), unsafe_allow_html=True)
     st.caption(
         "한국건설기술연구원 건설공사비지수(KOSIS, 2020=100)로 과거 공사비를 현재가치로 환산합니다. "
         "본 기능은 **내부 투자비 추정·검토용**이며, 「국가계약법」상 계약금액조정 산식과는 다릅니다."
@@ -1313,7 +1345,7 @@ with tab_cci:
                                  delta_type="neutral", icon="\U0001F3AF", highlight=True), unsafe_allow_html=True)
 
             st.markdown("<br>", unsafe_allow_html=True)
-            st.markdown(section_title("\U0001F4C8 건설공사비지수 추이"), unsafe_allow_html=True)
+            st.markdown(section_title("건설공사비지수 추이"), unsafe_allow_html=True)
             try:
                 client = KOSISClient(api_key=_kosis_key)
                 df_full = client.get_ppi(res["code"], "201501", res["target"])
@@ -1357,7 +1389,7 @@ with tab_cci:
                     f"| **환산 공사비** | **{res['adjusted']:,.1f} 억원** ({(res['factor']-1)*100:+.2f}%) |"
                 )
 
-                st.markdown("##### \U0001F4E4 내보내기")
+                st.markdown("##### 내보내기")
                 ex1, ex2 = st.columns(2)
                 with ex1:
                     pdf_bytes = generate_pdf_report(
@@ -1403,7 +1435,7 @@ with tab_cci:
 # Tab 3: 다중 설비 비교
 # ═══════════════════════════════════════════
 with tab_multi:
-    st.markdown(section_title("📊 여러 설비 PPI 동시 비교"), unsafe_allow_html=True)
+    st.markdown(section_title("여러 설비 PPI 동시 비교"), unsafe_allow_html=True)
 
     if True:
         catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
@@ -1569,7 +1601,7 @@ with tab_multi:
     # ───────────────────────────────────────────
     if "multi_items_info" in st.session_state and st.session_state["multi_items_info"]:
         st.markdown("---")
-        st.markdown("### 📰 AI 비교 분석")
+        st.markdown("### AI 비교 분석")
         st.caption("Gemini가 품목별로 왜 다르게 움직였는지 거시·산업 맥락으로 해설합니다.")
 
         if st.button("🧠 Gemini로 비교 분석 실행", key="multi_explain_btn", use_container_width=True):
@@ -1617,7 +1649,7 @@ with tab_multi:
 # Tab 4: 시나리오 분석 (What-if)
 # ═══════════════════════════════════════════
 with tab_scn:
-    st.markdown(section_title("🧪 What-if 시나리오 분석"), unsafe_allow_html=True)
+    st.markdown(section_title("What-if 시나리오 분석"), unsafe_allow_html=True)
     st.caption("원금·보정계수·외부 충격 변동 시 환산금액 변화를 실시간 시뮬레이션")
 
     s1, s2, s3 = st.columns(3)
@@ -1625,7 +1657,7 @@ with tab_scn:
     base_factor = s2.number_input("⚖️ 기준 보정계수", 0.1, 5.0, 1.23, step=0.01, format="%.4f")
     base_label = s3.text_input("🏷️ 시나리오 이름", "2020년 펌프 800억")
 
-    st.markdown("##### 🎛️ What-if 변수")
+    st.markdown("##### What-if 변수")
     v1, v2, v3 = st.columns(3)
     cost_shock = v1.slider("원금 변동 (%)", -50, 50, 0, help="자재비/인건비 변동 가정")
     ppi_shock = v2.slider("PPI 추가 변동 (%)", -30, 30, 0, help="원자재 급등/급락 시뮬")
@@ -1659,7 +1691,7 @@ with tab_scn:
 
     # 토네이도 차트 (민감도 분석)
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(section_title("🌪️ 민감도 토네이도 분석"), unsafe_allow_html=True)
+    st.markdown(section_title("민감도 토네이도 분석"), unsafe_allow_html=True)
     st.caption("각 변수 ±10% 변동 시 환산금액 영향 크기")
 
     tornado_data = []
@@ -1724,7 +1756,7 @@ with tab_scn:
 # Tab 5: 포트폴리오 환산기
 # ═══════════════════════════════════════════
 with tab_port:
-    st.markdown(section_title("📦 설비 구성비 기반 포트폴리오 환산"), unsafe_allow_html=True)
+    st.markdown(section_title("설비 구성비 기반 포트폴리오 환산"), unsafe_allow_html=True)
     st.caption("한 프로젝트의 여러 설비(기계/전기/토건)를 가중평균으로 통합 환산")
 
     p1, p2 = st.columns([1, 1])
@@ -1732,7 +1764,7 @@ with tab_port:
     base_period = p2.text_input("기준 시점", "202001")
     target_period = st.text_input("목표 시점", "202601")
 
-    st.markdown("##### 🧩 설비 구성")
+    st.markdown("##### 설비 구성")
     st.caption("각 설비 구성비를 입력하세요 (합계 100%)")
 
     # 기본 포트폴리오 예시
@@ -1944,7 +1976,7 @@ with tab_port:
 # Tab 6: 히트맵 & 상관관계 (v10 강화팩)
 # ═══════════════════════════════════════════
 with tab_heat:
-    st.markdown(section_title("🗺️ 원가 인텔리전스 히트맵"), unsafe_allow_html=True)
+    st.markdown(section_title("원가 인텔리전스 히트맵"), unsafe_allow_html=True)
     st.caption("다중 뷰 · 정렬 · 드릴다운 · 자동 인사이트 · AI 자연어 질의 · 자동 리포트")
 
     if "multi_series" not in st.session_state or not st.session_state["multi_series"]:
@@ -1993,7 +2025,7 @@ with tab_heat:
         yearly["Z-score"] = yearly.groupby("품목")["YoY(%)"].transform(_zscore)
 
         # ─── 3) Tier 1-① 다중 뷰 토글
-        st.markdown("#### 🎛️ 뷰 & 필터")
+        st.markdown("#### 뷰 & 필터")
         vc1, vc2, vc3, vc4 = st.columns([1.2, 1.2, 1.2, 1.4])
         with vc1:
             view_mode = st.radio(
@@ -2097,7 +2129,7 @@ with tab_heat:
 
         # ─── 9) Tier 3-⑨ 자동 인사이트 Top 5
         st.markdown("---")
-        st.markdown("#### 💡 자동 인사이트 Top 5")
+        st.markdown("#### 자동 인사이트 Top 5")
 
         yoy_pivot = yearly.pivot(index="품목", columns="YEAR", values="YoY(%)").dropna(how="all", axis=1)
 
@@ -2140,7 +2172,7 @@ with tab_heat:
 
         # ─── 10) Tier 1-③ 셀 드릴다운 + Gemini 원인 분석
         st.markdown("---")
-        st.markdown("#### 🔍 셀 드릴다운 — 특정 품목·연도 심층 분석")
+        st.markdown("#### 셀 드릴다운 — 특정 품목·연도 심층 분석")
 
         dc1, dc2, dc3 = st.columns([1.3, 1, 1])
         with dc1:
@@ -2218,7 +2250,7 @@ with tab_heat:
 
         # ─── 11) #14 AI 자연어 질의 박스
         st.markdown("---")
-        st.markdown("#### 🗣️ AI에게 데이터 질문하기")
+        st.markdown("#### AI에게 데이터 질문하기")
         st.caption("예: \"2020년 이후 변동성이 가장 낮은 품목 5개는?\" · \"2022년에 가장 많이 오른 품목 3개 이유는?\"")
 
         # 예시 질문 버튼
@@ -2276,7 +2308,7 @@ with tab_heat:
 
         # ─── 12) Tier 3-⑪ 자동 리포트 생성 버튼
         st.markdown("---")
-        st.markdown("#### 📄 임원 보고용 자동 리포트")
+        st.markdown("#### 임원 보고용 자동 리포트")
         rc1, rc2 = st.columns(2)
         with rc1:
             if st.button("🧾 Gemini 요약 리포트 생성", key="heat_report_btn", use_container_width=True):
@@ -2328,7 +2360,7 @@ with tab_heat:
 
         # ─── 13) Tier 3-⑫ 시간 애니메이션 Playback (월별)
         st.markdown("---")
-        st.markdown("#### 🎬 시간 Playback — 월별 rolling 12M YoY")
+        st.markdown("#### 시간 Playback — 월별 rolling 12M YoY")
         st.caption("재생 버튼을 눌러 12개월 YoY의 월별 변화를 애니메이션으로 확인합니다.")
 
         try:
@@ -2368,7 +2400,7 @@ with tab_heat:
 
         # ─── 14) 상관계수 매트릭스 (기존 유지)
         st.markdown("---")
-        st.markdown(section_title("🔗 품목 간 가격 동조 상관계수"), unsafe_allow_html=True)
+        st.markdown(section_title("품목 간 가격 동조 상관계수"), unsafe_allow_html=True)
         fig_c = px.imshow(
             corr, color_continuous_scale="RdBu_r",
             zmin=-1, zmax=1, text_auto=".2f",
@@ -2387,7 +2419,7 @@ with tab_heat:
 # Tab: \U0001F52E 물가 예측 (과거 추세 기반)
 # =========================================================
 with tab_fcst:
-    st.markdown(section_title("\U0001F52E 물가지수 예측 (과거 추세 기반)"), unsafe_allow_html=True)
+    st.markdown(section_title("물가지수 예측 (과거 추세 기반)"), unsafe_allow_html=True)
     st.warning(
         "\u26A0\uFE0F **예측값은 과거 추세의 연장일 뿐, 확정값이 아닙니다.** "
         "원자재 급등·정책 변화 등 외부 충격은 반영되지 않습니다. "
@@ -2519,14 +2551,14 @@ with tab_fcst:
 # Tab 7: 공유 / 내보내기 가이드
 # ═══════════════════════════════════════════
 with tab_share:
-    st.markdown(section_title("🔗 결과 공유 & 내보내기"), unsafe_allow_html=True)
+    st.markdown(section_title("결과 공유 & 내보내기"), unsafe_allow_html=True)
 
     st.markdown("""
     이 앱의 결과를 **동료에게 공유**하거나 **문서로 저장**하는 방법을 안내합니다.
     """)
 
     with st.container():
-        st.markdown("#### 📋 방법 1 — URL 링크 공유")
+        st.markdown("#### 방법 1 — URL 링크 공유")
         st.markdown("""
         Tab 2 (설비별 PPI 조회)에서 조회한 결과는 URL 파라미터로 저장할 수 있습니다.
 
@@ -2543,7 +2575,7 @@ with tab_share:
     st.divider()
 
     with st.container():
-        st.markdown("#### 📄 방법 2 — PDF / Excel 내보내기")
+        st.markdown("#### 방법 2 — PDF / Excel 내보내기")
         st.markdown("""
         각 탭 하단의 **다운로드 버튼** 으로 바로 받을 수 있습니다.
 
@@ -2556,7 +2588,7 @@ with tab_share:
     st.divider()
 
     with st.container():
-        st.markdown("#### 📸 방법 3 — 스크린샷 / 차트 이미지")
+        st.markdown("#### 방법 3 — 스크린샷 / 차트 이미지")
         st.markdown("""
         각 Plotly 차트 오른쪽 위 카메라 아이콘 📷 으로 PNG 이미지 저장 가능.
         """)
@@ -2565,7 +2597,7 @@ with tab_share:
 
     # 세션 상태 요약
     with st.container():
-        st.markdown("#### 💾 현재 세션 요약")
+        st.markdown("#### 현재 세션 요약")
         session_summary = {
             "데이터 소스": "한국은행 ECOS (LIVE)",
             "ECOS Key": "✅ 설정됨" if os.getenv("ECOS_API_KEY") else "❌ 없음",

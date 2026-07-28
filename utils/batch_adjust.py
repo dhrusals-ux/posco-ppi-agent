@@ -67,6 +67,43 @@ def _norm(s) -> str:
     return re.sub(r"\s+", "", str(s)).lower()
 
 
+def fmt_eok(v) -> str:
+    """
+    금액을 억 단위 문자열로 축약 (화면 표시용).
+
+    반올림이 들어가므로 이 값만 단독으로 쓰면 합계가 미세하게 안 맞을 수 있다.
+    근거 자료에는 반드시 원 단위 원값을 병기하고, 엑셀 출력은 원 단위를 쓴다.
+    """
+    if v is None:
+        return "—"
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if pd.isna(f):
+        return "—"
+    if abs(f) >= 1_0000_0000:          # 1억 이상
+        return f"{f / 1_0000_0000:,.1f}"
+    if abs(f) >= 1_0000:               # 1만 이상
+        return f"{f / 1_0000:,.0f}"
+    return f"{f:,.0f}"
+
+
+def eok_unit(v) -> str:
+    """fmt_eok과 짝을 이루는 단위 문자열"""
+    try:
+        f = abs(float(v))
+    except (TypeError, ValueError):
+        return ""
+    if pd.isna(f):
+        return ""
+    if f >= 1_0000_0000:
+        return "억원"
+    if f >= 1_0000:
+        return "만원"
+    return "원"
+
+
 # ─────────────────────────────────────────────
 # 1) 파일 읽기 · 컬럼 추정
 # ─────────────────────────────────────────────
