@@ -4,6 +4,7 @@ ECOS API + AI Agent + 시나리오 분석 + 포트폴리오 환산 + 고급 시�
 """
 import os
 import io
+import json
 import re
 from datetime import datetime, timedelta
 
@@ -26,6 +27,7 @@ from utils.batch_adjust import (
     CONF_HIGH, CONF_MEDIUM, CONF_LOW, CONF_NONE, CONF_ICON,
 )
 from data.steel_plant_items import STEEL_PLANT_ITEMS, get_processes, get_all_items_flat
+from data import item_selection as ISEL
 from data.ppi_categories import CATEGORY_FILTERS, filter_catalog_by_category
 from utils.theme import (
     inject_theme, kpi_card, hero_header, section_title, live_badge,
@@ -284,9 +286,10 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ═══════════════════════════════════════════
 # 탭 정의 (11개)
 # ═══════════════════════════════════════════
-(tab_mon, tab_ai, tab_batch, tab_ppi, tab_cci, tab_multi, tab_scn,
+(tab_mon, tab_items, tab_ai, tab_batch, tab_ppi, tab_cci, tab_multi, tab_scn,
  tab_port, tab_heat, tab_fcst, tab_share) = st.tabs([
     "품목 모니터링",
+    "관심 품목 설정",
     "AI Agent 환산",
     "엑셀 일괄 보정",
     "설비별 PPI 조회",
@@ -370,16 +373,51 @@ with tab_mon:
     if mon_catalog is None or len(mon_catalog) == 0:
         st.error("ECOS 카탈로그 로드 실패 — 사이드바에서 인증키를 확인하세요.")
     else:
+        # '관심 품목 설정' 탭에서 고른 선택이 있으면 그걸 우선 쓴다.
+        # 직접 고른 품목은 실제 ITEM_CODE를 갖고 있어 키워드 매칭이 필요 없다.
+        if "item_selection" not in st.session_state:
+            try:
+                st.session_state["item_selection"] = ISEL.load_selection() or ISEL.empty_selection()
+            except Exception:
+                st.session_state["item_selection"] = ISEL.empty_selection()
+        _mon_sel = st.session_state["item_selection"]
+        _mon_sel_total = ISEL.total_count(_mon_sel)
+
+        _src_opts = ["기본 목록 (공정별 키워드)"]
+        if _mon_sel_total:
+            _src_opts.insert(0, f"직접 선택한 품목 ({_mon_sel_total}개)")
+        _src = st.radio("품목 출처", _src_opts, horizontal=True, key="mon_src")
+        _use_selection = _src.startswith("직접 선택")
+
+        if not _mon_sel_total:
+            st.caption(
+                "'관심 품목 설정' 탭에서 ECOS 카탈로그에서 직접 고르면 여기서 선택할 수 있습니다. "
+                "직접 고른 품목은 코드가 확정되므로 매칭 실패가 발생하지 않습니다."
+            )
+
+        _proc_pool = (list(ISEL.counts(_mon_sel)) if _use_selection else get_processes())
+
         csel1, csel2 = st.columns([2, 1])
         with csel1:
-            proc_options = ["\U0001F310 전체"] + get_processes()
+            proc_options = ["\U0001F310 전체"] + _proc_pool
             sel_proc = st.radio("공정 선택", proc_options, horizontal=True, key="mon_proc")
         with csel2:
             mon_months = st.selectbox("조회 기간", [12, 24, 36, 60], index=1,
                                       format_func=lambda x: f"최근 {x}개월", key="mon_months")
 
         # 대상 품목 결정
-        if sel_proc == "\U0001F310 전체":
+        if _use_selection:
+            _all_sel_items = ISEL.selection_to_items(_mon_sel)
+            if sel_proc == "\U0001F310 전체":
+                target_items, _seen = [], set()
+                for _it in _all_sel_items:
+                    if _it["code"] in _seen:
+                        continue
+                    _seen.add(_it["code"])
+                    target_items.append(_it)
+            else:
+                target_items = [i for i in _all_sel_items if i["process"] == sel_proc]
+        elif sel_proc == "\U0001F310 전체":
             target_items, dedup = [], set()
             for _it in get_all_items_flat():
                 if _it["label"] in dedup:
@@ -389,7 +427,11 @@ with tab_mon:
         else:
             target_items = STEEL_PLANT_ITEMS.get(sel_proc, [])
 
-        st.caption(f"\U0001F4CC 대상 품목 **{len(target_items)}개** · 공정: {sel_proc}")
+        st.caption(
+            f"대상 품목 **{len(target_items)}개** · 공정: {sel_proc} · "
+            f"출처: {'직접 선택' if _use_selection else '기본 목록'} "
+            f"(품목당 ECOS 호출 1회)"
+        )
 
         _end = datetime.now().strftime("%Y%m")
         _start_dt = datetime.now().replace(day=1) - pd.Timedelta(days=31 * (mon_months + 2))
@@ -516,6 +558,219 @@ with tab_mon:
                             "`data/steel_plant_items.py`의 keywords를 실제 품목명에 맞게 보완하세요. "
                             "'설비별 PPI 조회' 탭에서 실제 품목명을 검색해 확인할 수 있습니다."
                         )
+
+
+# ═══════════════════════════════════════════
+# Tab: 관심 품목 설정 (ECOS 카탈로그에서 공정별로 직접 선택)
+# ═══════════════════════════════════════════
+with tab_items:
+    st.markdown(section_title("관심 품목 설정 — 공정별"), unsafe_allow_html=True)
+    st.caption(
+        "ECOS 카탈로그에서 플랜트 설비 품목을 **공정별로 직접 골라** 저장합니다. "
+        "선택한 품목은 '품목 모니터링'과 월간 메일 리포트에 함께 반영됩니다."
+    )
+
+    _isel_cat = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+    if _isel_cat is None or len(_isel_cat) == 0:
+        st.error("ECOS 카탈로그 로드 실패 — 사이드바에서 인증키를 확인하세요.")
+    else:
+        # 세션에 없으면 커밋된 파일에서 읽고, 그것도 없으면 빈 선택으로 시작
+        if "item_selection" not in st.session_state:
+            try:
+                _loaded = ISEL.load_selection()
+            except Exception as e:
+                _loaded = None
+                st.warning(
+                    f"저장된 선택 파일을 읽지 못했습니다 ({e}). 빈 상태로 시작합니다. "
+                    "`data/selected_items.json` 형식을 확인하세요."
+                )
+            st.session_state["item_selection"] = _loaded or ISEL.empty_selection()
+
+        _sel = st.session_state["item_selection"]
+        _counts = ISEL.counts(_sel)
+        _total = ISEL.total_count(_sel)
+
+        # ── 현재 저장 상태 ──
+        if _total:
+            st.markdown(
+                "**현재 선택** · "
+                + " · ".join(f"{p} {n}개" for p, n in _counts.items())
+                + f" · **합계 {_total}개**"
+            )
+        else:
+            st.info(
+                "아직 선택된 품목이 없습니다. 아래에서 공정을 고르고 품목을 체크하세요. "
+                "기존 기본 목록으로 시작하려면 '기본 목록 불러오기'를 누르세요."
+            )
+
+        b1, b2 = st.columns([1, 3])
+        with b1:
+            if st.button("기본 목록 불러오기", use_container_width=True,
+                         help="steel_plant_items.py의 공정별 기본 목록을 카탈로그에 매칭해 채웁니다"):
+                _base = ISEL.from_default_items(_isel_cat, get_all_items_flat())
+                st.session_state["item_selection"] = _base
+                _n = ISEL.total_count(_base)
+                st.success(f"기본 목록에서 {_n}개를 불러왔습니다. 공정별로 확인·수정하세요.")
+                st.rerun()
+        with b2:
+            if _total and st.button("전체 선택 비우기", use_container_width=True):
+                st.session_state["item_selection"] = ISEL.empty_selection()
+                st.rerun()
+
+        st.divider()
+
+        # ── 공정 선택 ──
+        st.markdown("#### 1. 공정 선택")
+        _proc_list = list(dict.fromkeys(ISEL.DEFAULT_PROCESSES + list(_counts)))
+        pc1, pc2 = st.columns([2, 2])
+        with pc1:
+            _proc = st.selectbox(
+                "저장할 공정", _proc_list,
+                format_func=lambda p: f"{p}  ({_counts.get(p, 0)}개)",
+                key="isel_proc",
+            )
+        with pc2:
+            _new_proc = st.text_input(
+                "공정 직접 추가", value="", key="isel_newproc",
+                placeholder="예: 후판, 스테인리스",
+                help="목록에 없는 공정을 쓰려면 입력하세요. 입력하면 이 값이 우선합니다.",
+            )
+        _target_proc = (_new_proc or "").strip() or _proc
+
+        # ── 품목 필터 ──
+        st.markdown("#### 2. 품목 찾기")
+        fc1, fc2 = st.columns([3, 2])
+        with fc1:
+            _cats = st.multiselect(
+                "카테고리", list(ISEL.PLANT_CATEGORIES),
+                default=["기계·장비", "전기·전력설비"],
+                key="isel_cats",
+                help="ECOS 품목명에 들어간 단어로 거릅니다. 비우면 전체가 나옵니다.",
+            )
+        with fc2:
+            _q = st.text_input("이름 검색", value="", key="isel_q",
+                               placeholder="예: 변압기, 목적용")
+
+        _filtered = ISEL.filter_catalog(_isel_cat, _cats, _q)
+        _selected_codes = set(ISEL.codes_of(_sel, _target_proc))
+
+        # 이미 선택된 품목은 필터에서 빠져도 표에 남겨야 한다.
+        # 안 그러면 필터를 바꿔 저장할 때 기존 선택이 조용히 지워진다.
+        _extra = _isel_cat[
+            _isel_cat["ITEM_CODE"].astype(str).isin(_selected_codes)
+            & ~_isel_cat["ITEM_CODE"].astype(str).isin(_filtered["ITEM_CODE"].astype(str))
+        ] if len(_filtered) else _isel_cat[
+            _isel_cat["ITEM_CODE"].astype(str).isin(_selected_codes)
+        ]
+        _view = pd.concat([_extra, _filtered], ignore_index=True) if len(_extra) else _filtered
+
+        st.caption(
+            f"필터 결과 **{len(_filtered):,}개**"
+            + (f" (+ 이미 선택된 {len(_extra)}개 포함)" if len(_extra) else "")
+            + f" · 카탈로그 전체 {len(_isel_cat):,}개"
+        )
+
+        _CAP = 400
+        if len(_view) > _CAP:
+            st.warning(
+                f"표시 대상이 {len(_view):,}개입니다. 상위 {_CAP}개만 표시합니다 — "
+                "카테고리나 검색어로 범위를 좁혀주세요. "
+                "(범위를 좁혀도 이미 선택한 품목은 유지됩니다)"
+            )
+            _view = _view.head(_CAP)
+
+        if len(_view) == 0:
+            st.info("조건에 맞는 품목이 없습니다. 카테고리를 늘리거나 검색어를 지워보세요.")
+        else:
+            # ── 체크박스 표 ──
+            st.markdown(f"#### 3. `{_target_proc}` 에 넣을 품목 체크")
+            _note_of = {
+                it["code"]: it.get("note", "")
+                for it in ISEL.normalize(_sel)["processes"].get(_target_proc, [])
+            }
+            _grid = pd.DataFrame({
+                "선택": [str(c) in _selected_codes for c in _view["ITEM_CODE"]],
+                "품목명": _view["ITEM_NAME"].astype(str),
+                "코드": _view["ITEM_CODE"].astype(str),
+                "비고": [_note_of.get(str(c), "") for c in _view["ITEM_CODE"]],
+            })
+            _grid = _grid.sort_values(["선택", "품목명"], ascending=[False, True]).reset_index(drop=True)
+
+            _edited = st.data_editor(
+                _grid, use_container_width=True, hide_index=True, height=430,
+                key=f"isel_editor_{_target_proc}",
+                column_config={
+                    "선택": st.column_config.CheckboxColumn("선택", width="small"),
+                    "품목명": st.column_config.TextColumn("ECOS 품목명", disabled=True),
+                    "코드": st.column_config.TextColumn("코드", disabled=True, width="small"),
+                    "비고": st.column_config.TextColumn(
+                        "비고", help="이 공정에서 왜 보는지 (리포트에는 표시되지 않음)"),
+                },
+            )
+
+            _checked = _edited[_edited["선택"].fillna(False).astype(bool)]
+            st.caption(f"체크 **{len(_checked)}개** · 저장하면 `{_target_proc}` 의 기존 선택을 교체합니다")
+
+            sc1, sc2 = st.columns([1, 3])
+            with sc1:
+                if st.button(f"`{_target_proc}` 저장", type="primary", use_container_width=True):
+                    _items = [
+                        {"code": r["코드"], "name": r["품목명"], "note": r["비고"] or ""}
+                        for _, r in _checked.iterrows()
+                    ]
+                    st.session_state["item_selection"] = ISEL.set_process(
+                        _sel, _target_proc, _items)
+                    st.success(f"{_target_proc}: {len(_items)}개 저장했습니다.")
+                    st.rerun()
+
+        st.divider()
+
+        # ── 저장 상태 · 내보내기 ──
+        st.markdown("#### 4. 저장 · 반영")
+        st.warning(
+            "**이 선택은 지금 브라우저 세션에만 있습니다.** Streamlit Cloud는 파일을 "
+            "영구 보관하지 않고, 월간 메일은 GitHub Actions에서 따로 돌아갑니다.\n\n"
+            "→ 아래 JSON을 내려받아 레포의 `data/selected_items.json` 으로 커밋하세요. "
+            "그러면 앱과 월간 메일이 모두 이 파일을 읽습니다."
+        )
+
+        _sel_now = st.session_state["item_selection"]
+        if ISEL.total_count(_sel_now):
+            _rows_view = []
+            for _p, _its in ISEL.normalize(_sel_now)["processes"].items():
+                for _it in _its:
+                    _rows_view.append({"공정": _p, "품목명": _it["name"],
+                                       "코드": _it["code"], "비고": _it.get("note", "")})
+            st.dataframe(pd.DataFrame(_rows_view), use_container_width=True, hide_index=True)
+
+            d1, d2 = st.columns(2)
+            with d1:
+                st.download_button(
+                    "selected_items.json 내려받기",
+                    data=ISEL.dumps_selection(_sel_now).encode("utf-8"),
+                    file_name="selected_items.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
+            with d2:
+                st.download_button(
+                    "선택 목록 엑셀로 내려받기",
+                    data=to_excel_bytes({"관심품목": pd.DataFrame(_rows_view)}),
+                    file_name=f"관심품목_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+
+        _up = st.file_uploader("저장해 둔 selected_items.json 불러오기",
+                               type=["json"], key="isel_upload")
+        if _up is not None and st.button("불러온 파일로 교체", use_container_width=True):
+            try:
+                _raw = json.loads(_up.read().decode("utf-8"))
+                st.session_state["item_selection"] = ISEL.normalize(_raw)
+                st.success(f"{ISEL.total_count(st.session_state['item_selection'])}개를 불러왔습니다.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"불러오기 실패: {e}")
 
 
 # ═══════════════════════════════════════════

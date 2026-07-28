@@ -34,6 +34,7 @@ import sys
 # 레포 루트를 import 경로에 넣는다 (python scripts/... 로 직접 실행하는 경우 대비)
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+from data import item_selection as ISEL  # noqa: E402
 from data.steel_plant_items import get_all_items_flat  # noqa: E402
 from utils.ecos_catalog import get_catalog  # noqa: E402
 from utils.ecos_client import ECOSClient  # noqa: E402
@@ -69,10 +70,35 @@ def main() -> int:
         print("[오류] ECOS 품목 카탈로그를 불러오지 못했습니다.", file=sys.stderr)
         return 2
 
-    # dedup=True: 같은 품목이 여러 공정에 걸려 있어도 한 번만 조회한다.
-    # 품목마다 개별 API 호출이 발생하므로 중복을 없애야 호출 수가 줄고
-    # 리포트 표에 같은 품목이 두 번 나오지 않는다.
-    items = get_all_items_flat(dedup=True)
+    # 1순위: 앱 '관심 품목 설정' 탭에서 고른 뒤 커밋한 data/selected_items.json
+    #        (실제 ITEM_CODE가 들어 있어 키워드 매칭이 필요 없다)
+    # 2순위: steel_plant_items.py의 공정별 기본 목록 (키워드 매칭)
+    items, source = None, ""
+    try:
+        sel = ISEL.load_selection()
+    except Exception as e:
+        print(f"[오류] {ISEL.SELECTION_PATH.name} 을 읽을 수 없습니다: {e}", file=sys.stderr)
+        print("       형식을 고치거나 파일을 지우면 기본 목록으로 돌아갑니다.", file=sys.stderr)
+        return 2
+
+    if sel and ISEL.total_count(sel):
+        items = ISEL.selection_to_items(sel)
+        # 같은 코드가 여러 공정에 있으면 한 번만 조회한다 (품목당 API 1회)
+        seen, uniq = set(), []
+        for it in items:
+            if it["code"] in seen:
+                continue
+            seen.add(it["code"])
+            uniq.append(it)
+        items = uniq
+        source = (f"직접 선택 ({ISEL.SELECTION_PATH.name}, "
+                  f"공정 {len(ISEL.counts(sel))}개, 수정 {sel.get('updated_at', '?')})")
+    else:
+        # dedup=True: 같은 품목이 여러 공정에 걸려 있어도 한 번만 조회한다.
+        items = get_all_items_flat(dedup=True)
+        source = "기본 목록 (steel_plant_items.py, 키워드 매칭)"
+
+    print(f"품목 출처: {source}")
     print(f"관심 품목 {len(items)}개 조회 중... (품목당 API 1회)")
 
     report = build_report(

@@ -120,7 +120,19 @@ def build_monitor(
     rows, series, unresolved = [], {}, []
 
     for it in items:
-        resolved = resolve_item(catalog, it.get("keywords", []))
+        # 코드가 이미 정해져 있으면 매칭을 건너뛴다.
+        # 카탈로그에서 직접 고른 품목은 실제 코드를 갖고 있으므로,
+        # 키워드로 다시 추정할 필요가 없다 — 잘못 매칭될 여지 자체가 없어진다.
+        explicit = str(it.get("code") or "").strip()
+        if explicit:
+            resolved = {
+                "code": explicit,
+                "name": it.get("ecos_name") or it.get("label", ""),
+                "matched": "(직접 선택)",
+            }
+        else:
+            resolved = resolve_item(catalog, it.get("keywords", []))
+
         if not resolved:
             unresolved.append(it.get("label", "?"))
             continue
