@@ -4,7 +4,8 @@ ECOS API + AI Agent + 시나리오 분석 + 포트폴리오 환산 + 고급 시�
 """
 import os
 import io
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 
 import pandas as pd
 import numpy as np
@@ -19,6 +20,11 @@ from utils.construction_catalog import get_construction_catalog, catalog_to_opti
 from utils.ecos_catalog import get_catalog
 from utils.forecast import forecast_index, MAX_HORIZON
 from utils.monitor import build_monitor
+from utils.batch_adjust import (
+    read_table, guess_columns, suggest_matches, approval_blockers,
+    run_batch, summarize, MAX_ROWS,
+    CONF_HIGH, CONF_MEDIUM, CONF_LOW, CONF_NONE, CONF_ICON,
+)
 from data.steel_plant_items import STEEL_PLANT_ITEMS, get_processes, get_all_items_flat
 from data.ppi_categories import CATEGORY_FILTERS, filter_catalog_by_category
 from utils.theme import (
@@ -275,12 +281,13 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════
-# 탭 정의 (7개)
+# 탭 정의 (11개)
 # ═══════════════════════════════════════════
-(tab_mon, tab_ai, tab_ppi, tab_cci, tab_multi, tab_scn,
+(tab_mon, tab_ai, tab_batch, tab_ppi, tab_cci, tab_multi, tab_scn,
  tab_port, tab_heat, tab_fcst, tab_share) = st.tabs([
     "📡 품목 모니터링",
     "🤖 AI Agent 환산",
+    "📑 엑셀 일괄 보정",
     "🔍 설비별 PPI 조회",
     "🏗️ 공사비 물가보정",
     "📊 다중 설비 비교",
@@ -787,6 +794,289 @@ with tab_ai:
                 st.info("💡 INFO-100: ECOS 키 확인 (따옴표/공백 제거 · 발급 후 1시간 대기)")
             elif "INFO-200" in err_str:
                 st.info("💡 INFO-200: ⚙️ 강제 ITEM_CODE에 실제 코드를 넣어보세요")
+
+
+# ═══════════════════════════════════════════
+# Tab: 📑 엑셀 일괄 보정 (견적서 → 자동제안 → 사람확인 → 승인 → 환산)
+# ═══════════════════════════════════════════
+with tab_batch:
+    st.markdown(section_title("📑 견적 엑셀 일괄 물가보정"), unsafe_allow_html=True)
+    st.caption(
+        "투자비 견적 엑셀을 올리면 각 행의 품목명을 ECOS 품목으로 **자동 제안**하고, "
+        "사람이 확인·승인한 뒤 전체를 일괄 환산합니다."
+    )
+    st.warning(
+        "⚠️ **자동 매칭은 제안일 뿐 확정이 아닙니다.**\n\n"
+        "견적 품목명('냉각수 순환펌프 1식', 'BFP 3대')은 구체적이라 자동 매칭이 틀릴 수 있고, "
+        "틀린 매칭은 **에러 없이 조용히 틀린 금액**을 만들어 투자 품의서에 들어갈 위험이 있습니다.\n\n"
+        "→ 신뢰도가 🟢 높음이 아닌 행은 **직접 확인하고 '확인'에 체크해야** 실행됩니다."
+    )
+
+    _bat_cat = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+    if _bat_cat is None or len(_bat_cat) == 0:
+        st.error("ECOS 카탈로그 로드 실패 — 사이드바에서 인증키를 확인하세요.")
+    else:
+        # 드롭다운용 옵션: "코드 · 품목명" (사람이 다른 품목으로 갈아끼울 수 있게 전체 노출)
+        _bat_opts = [""] + [
+            f"{r.ITEM_CODE} · {r.ITEM_NAME}" for r in _bat_cat.itertuples()
+        ]
+
+        def _bat_label(code, name):
+            code, name = str(code or "").strip(), str(name or "").strip()
+            return f"{code} · {name}" if code else ""
+
+        def _bat_parse(label):
+            """'6114 · 펌프' → ('6114', '펌프')"""
+            s = str(label or "")
+            if " · " not in s:
+                return "", ""
+            code, name = s.split(" · ", 1)
+            return code.strip(), name.strip()
+
+        # ── 1) 업로드
+        st.markdown("#### 1️⃣ 견적 엑셀 업로드")
+        _bat_sample = to_excel_bytes({
+            "견적서": pd.DataFrame({
+                "품목명": ["냉각수 순환펌프 1식", "주변압기 154kV", "형강 H-300x300"],
+                "규격": ["150kW", "60MVA", "SS400"],
+                "투자비(원)": [1200000000, 2500000000, 180000000],
+            })
+        })
+        c_up, c_smp = st.columns([3, 1])
+        with c_up:
+            _bat_file = st.file_uploader(
+                "xlsx / xls / csv",
+                type=["xlsx", "xls", "csv"],
+                key="bat_file",
+                help="품목명 컬럼과 금액 컬럼이 있으면 됩니다. 헤더는 1행에 두세요.",
+            )
+        with c_smp:
+            st.download_button(
+                "📥 샘플 양식",
+                data=_bat_sample,
+                file_name="견적_샘플양식.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
+        if _bat_file is None:
+            st.info("견적 엑셀을 업로드하면 자동 매칭이 시작됩니다. 양식이 없으면 샘플을 내려받아 쓰세요.")
+        else:
+            try:
+                _bat_raw = read_table(_bat_file, _bat_file.name)
+            except Exception as e:
+                _bat_raw = None
+                st.error(f"파일을 읽을 수 없습니다: {e}")
+
+            if _bat_raw is not None and len(_bat_raw) > 0:
+                st.success(f"{len(_bat_raw):,}행 · {len(_bat_raw.columns)}컬럼 읽음")
+                with st.expander("📄 원본 미리보기 (상위 10행)"):
+                    st.dataframe(_bat_raw.head(10), use_container_width=True)
+
+                # ── 2) 컬럼 지정
+                st.markdown("#### 2️⃣ 컬럼 지정")
+                _g_item, _g_amt = guess_columns(_bat_raw)
+                _cols = list(_bat_raw.columns)
+                cc1, cc2 = st.columns(2)
+                with cc1:
+                    _bat_item_col = st.selectbox(
+                        "품목명 컬럼", _cols,
+                        index=_cols.index(_g_item) if _g_item in _cols else 0,
+                        key="bat_item_col",
+                    )
+                with cc2:
+                    _bat_amt_col = st.selectbox(
+                        "금액 컬럼", _cols,
+                        index=_cols.index(_g_amt) if _g_amt in _cols else 0,
+                        key="bat_amt_col",
+                    )
+                st.caption("자동 추정값입니다. 틀렸으면 바꿔주세요.")
+
+                if len(_bat_raw) > MAX_ROWS:
+                    st.error(
+                        f"행 수 {len(_bat_raw):,}건이 상한 {MAX_ROWS}건을 초과합니다. "
+                        "품목별로 개별 API 호출이 발생하므로 나눠서 처리하세요."
+                    )
+                elif st.button("🔎 자동 매칭 실행", type="primary", use_container_width=True):
+                    with st.spinner("ECOS 품목 자동 매칭 중..."):
+                        try:
+                            _rev = suggest_matches(
+                                _bat_raw, _bat_item_col, _bat_amt_col, _bat_cat
+                            )
+                            _rev["확정품목"] = [
+                                _bat_label(r["제안코드"], r["제안품목"])
+                                for _, r in _rev.iterrows()
+                            ]
+                            _rev["확인"] = _rev["신뢰도"] == CONF_HIGH
+                            st.session_state["bat_review"] = _rev
+                            st.session_state.pop("bat_result", None)
+                        except Exception as e:
+                            st.error(f"매칭 실패: {e}")
+
+                # ── 3) 검토 · 수정 · 확인
+                if "bat_review" in st.session_state:
+                    _rev = st.session_state["bat_review"]
+
+                    st.markdown("#### 3️⃣ 매칭 검토 · 수정")
+                    n_hi = int((_rev["신뢰도"] == CONF_HIGH).sum())
+                    n_mid = int((_rev["신뢰도"] == CONF_MEDIUM).sum())
+                    n_lo = int((_rev["신뢰도"] == CONF_LOW).sum())
+                    n_no = int((_rev["신뢰도"] == CONF_NONE).sum())
+                    k1, k2, k3, k4 = st.columns(4)
+                    for _c, _lbl, _v in [
+                        (k1, "🟢 높음", n_hi), (k2, "🟠 중간", n_mid),
+                        (k3, "🔴 낮음", n_lo), (k4, "⚪ 실패", n_no),
+                    ]:
+                        with _c:
+                            st.markdown(kpi_card(_lbl, f"{_v}건"), unsafe_allow_html=True)
+
+                    if n_lo or n_no or n_mid:
+                        st.info(
+                            "🟠🔴⚪ 행은 **판단근거**를 읽고 '확정품목'을 바로잡은 뒤 '확인'에 체크하세요. "
+                            "드롭다운에는 ECOS 전체 품목이 들어 있습니다."
+                        )
+
+                    _show = _rev.copy()
+                    _show["신뢰도"] = _show["신뢰도"].map(lambda v: CONF_ICON.get(v, v))
+                    _edited = st.data_editor(
+                        _show[["행", "견적품목명", "금액", "신뢰도", "확정품목", "확인", "판단근거", "금액오류"]],
+                        use_container_width=True,
+                        hide_index=True,
+                        key="bat_editor",
+                        column_config={
+                            "행": st.column_config.NumberColumn("엑셀행", disabled=True, width="small"),
+                            "견적품목명": st.column_config.TextColumn("견적 품목명", disabled=True),
+                            "금액": st.column_config.NumberColumn(
+                                "금액(원)", format="%.0f",
+                                help="'800억'처럼 단위가 붙은 값은 읽지 못합니다. 여기서 숫자로 고치세요.",
+                            ),
+                            "신뢰도": st.column_config.TextColumn("신뢰도", disabled=True, width="small"),
+                            "확정품목": st.column_config.SelectboxColumn(
+                                "확정 ECOS 품목", options=_bat_opts, required=False,
+                                help="자동 제안이 틀렸으면 여기서 다른 품목을 고르세요.",
+                            ),
+                            "확인": st.column_config.CheckboxColumn("확인", help="사람이 검토했음"),
+                            "판단근거": st.column_config.TextColumn("판단근거", disabled=True, width="large"),
+                            "금액오류": st.column_config.TextColumn("금액오류", disabled=True),
+                        },
+                    )
+
+                    # 편집 결과를 원본 스키마로 되돌림
+                    _rev2 = _rev.copy()
+                    _rev2["금액"] = _edited["금액"].values
+                    _rev2["확인"] = _edited["확인"].fillna(False).astype(bool).values
+                    _codes, _names = zip(*[_bat_parse(v) for v in _edited["확정품목"].values]) \
+                        if len(_edited) else ((), ())
+                    _rev2["제안코드"] = list(_codes)
+                    _rev2["제안품목"] = list(_names)
+                    st.session_state["bat_review"] = _rev2
+
+                    # ── 4) 시점 + 승인 게이트
+                    st.markdown("#### 4️⃣ 기준·목표 시점")
+                    _dflt_target = (datetime.now() - timedelta(days=60)).strftime("%Y%m")
+                    p1, p2 = st.columns(2)
+                    with p1:
+                        _bat_base = st.text_input("기준시점 (YYYYMM)", value="201901", key="bat_base")
+                    with p2:
+                        _bat_target = st.text_input("목표시점 (YYYYMM)", value=_dflt_target, key="bat_target")
+                    st.caption("환산액 = 원금 × (목표시점 지수 ÷ 기준시점 지수)")
+
+                    _blockers = approval_blockers(_rev2)
+                    if not re.fullmatch(r"\d{6}", str(_bat_base) or ""):
+                        _blockers.append("기준시점 형식이 YYYYMM이 아닙니다.")
+                    if not re.fullmatch(r"\d{6}", str(_bat_target) or ""):
+                        _blockers.append("목표시점 형식이 YYYYMM이 아닙니다.")
+
+                    st.markdown("#### 5️⃣ 승인 후 실행")
+                    if _blockers:
+                        st.error(
+                            "**아래를 해결해야 실행할 수 있습니다** — 확인되지 않은 매칭으로 "
+                            "금액을 만들지 않기 위한 안전장치입니다.\n\n"
+                            + "\n".join(f"- {b}" for b in _blockers)
+                        )
+                    else:
+                        st.success("✅ 전 행 검토 완료 — 실행 가능합니다.")
+
+                    if st.button(
+                        "🚀 승인 후 일괄 보정 실행",
+                        type="primary", use_container_width=True,
+                        disabled=bool(_blockers),
+                    ):
+                        _pb = st.progress(0.0, text="보정 준비 중...")
+
+                        def _cb(done, total, label):
+                            _pb.progress(done / max(total, 1), text=f"[{done}/{total}] {label}")
+
+                        try:
+                            _res = run_batch(
+                                _rev2, get_client(), str(_bat_base), str(_bat_target),
+                                progress_cb=_cb,
+                            )
+                            st.session_state["bat_result"] = _res
+                        except Exception as e:
+                            st.error(f"보정 실행 실패: {e}")
+                        finally:
+                            _pb.empty()
+
+                # ── 6) 결과
+                if "bat_result" in st.session_state:
+                    _res = st.session_state["bat_result"]
+                    _sm = summarize(_res)
+
+                    st.divider()
+                    st.markdown("#### 6️⃣ 보정 결과")
+
+                    r1, r2, r3, r4 = st.columns(4)
+                    with r1:
+                        st.markdown(kpi_card("원금 합계", f"{_sm['원금합계']:,.0f}원"), unsafe_allow_html=True)
+                    with r2:
+                        st.markdown(kpi_card("환산 합계", f"{_sm['환산합계']:,.0f}원", highlight=True), unsafe_allow_html=True)
+                    with r3:
+                        _d = _sm["증감률(%)"]
+                        st.markdown(kpi_card(
+                            "증감률", f"{_d:+.2f}%" if _d is not None else "—",
+                            delta_type="up" if (_d or 0) > 0 else "down",
+                        ), unsafe_allow_html=True)
+                    with r4:
+                        st.markdown(kpi_card("성공 / 실패", f"{_sm['성공']} / {_sm['실패']}"), unsafe_allow_html=True)
+
+                    if _sm["실패"]:
+                        st.warning(
+                            f"⚠️ {_sm['실패']}건은 환산하지 못했습니다. **합계에서 제외**했으므로 "
+                            "총액이 견적 전체와 다릅니다. '오류' 열을 확인하세요."
+                        )
+
+                    st.dataframe(_res, use_container_width=True, hide_index=True)
+
+                    _disc = (
+                        "본 결과는 내부 투자비 추정·검토용이며, 「국가계약법」상 계약금액조정(물가변동) "
+                        "산식과 다르므로 공식 계약 근거로 사용할 수 없습니다. "
+                        "품목 매칭은 자동 제안에 사람 확인을 거친 것으로, 매칭 적정성의 최종 책임은 검토자에게 있습니다."
+                    )
+                    st.caption(f"ℹ️ {_disc}")
+
+                    _sum_df = pd.DataFrame([
+                        {"항목": k, "값": v} for k, v in _sm.items()
+                    ])
+                    _meta_df = pd.DataFrame([
+                        {"항목": "기준시점", "값": st.session_state.get("bat_base", "")},
+                        {"항목": "목표시점", "값": st.session_state.get("bat_target", "")},
+                        {"항목": "데이터 출처", "값": "한국은행 ECOS 생산자물가지수 (404Y014, 2020=100)"},
+                        {"항목": "생성일시", "값": datetime.now().strftime("%Y-%m-%d %H:%M")},
+                        {"항목": "면책", "값": _disc},
+                    ])
+                    st.download_button(
+                        "📊 결과 엑셀 내려받기",
+                        data=to_excel_bytes({
+                            "보정결과": _res,
+                            "요약": _sum_df,
+                            "매칭검토": st.session_state["bat_review"].drop(columns=["후보"], errors="ignore"),
+                            "산출근거": _meta_df,
+                        }),
+                        file_name=f"투자비_일괄보정_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
 
 
 # ═══════════════════════════════════════════
