@@ -2615,12 +2615,11 @@ with tab_share:
 # ═══════════════════════════════════════════
 st.divider()
 st.markdown(
-    f"""
-    <div style="text-align:center; color:#94A3B8; font-size:12px; padding:20px 0;">
-        🏭 <b>POSCO 투자비 물가보정 시스템</b> · 한국은행 ECOS 생산자물가지수 기반
-        <br>
-        <span style="font-size:11px;">© 2026 포스코 투자엔지니어링실 · 내부 검토용</span>
-    </div>
-    """,
+    '<div style="text-align:center; color:#848484; font-size:12px; padding:22px 0;">'
+    "<b>POSCO 투자비 물가보정 시스템</b> · 한국은행 ECOS 생산자물가지수 · "
+    "한국건설기술연구원 건설공사비지수(KOSIS)<br>"
+    '<span style="font-size:11px;">© 2026 포스코 투자엔지니어링실 · 내부 검토용 — '
+    "「국가계약법」상 계약금액조정 산식과 다르므로 공식 계약 근거로 사용 금지</span>"
+    "</div>",
     unsafe_allow_html=True,
 )

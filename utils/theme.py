@@ -374,29 +374,34 @@ def kpi_card(label, value, delta=None, delta_type="neutral", icon="", highlight=
     """
     klass = "highlight-card" if highlight else "kpi-card"
     unit_html = f'<span class="kpi-unit">{unit}</span>' if unit else ""
-    sub_html = f'<div class="kpi-sub">{sub}</div>' if sub else ""
-    delta_html = ""
+
+    parts = [
+        f'<div class="{klass}">',
+        f'<div class="kpi-label">{label}</div>',
+        f'<div class="kpi-value">{value}{unit_html}</div>',
+    ]
+    if sub:
+        parts.append(f'<div class="kpi-sub">{sub}</div>')
     if delta:
         arrow = "▲" if delta_type == "up" else ("▼" if delta_type == "down" else "—")
-        delta_html = f'<div class="kpi-delta {delta_type}">{arrow} {delta}</div>'
-    return f"""
-    <div class="{klass}">
-        <div class="kpi-label">{label}</div>
-        <div class="kpi-value">{value}{unit_html}</div>
-        {sub_html}
-        {delta_html}
-    </div>
-    """
+        parts.append(f'<div class="kpi-delta {delta_type}">{arrow} {delta}</div>')
+    parts.append("</div>")
+
+    # ★ 반드시 한 줄로 이어붙인다.
+    # 들여쓴 여러 줄로 만들면, 값이 없는 자리(sub/delta)가 빈 줄로 남아
+    # Markdown이 HTML 블록을 그 지점에서 끊는다. 뒤따르는 들여쓴 줄은
+    # 코드 블록으로 처리되어 '<div class="kpi-delta...'가 화면에 그대로 찍힌다.
+    return "".join(parts)
 
 
 def hero_header(title, subtitle):
     """상단 헤더 — 평면 화이트 + 상단 블루 룰"""
-    return f"""
-    <div class="posco-hero">
-        <h1>{title}</h1>
-        <p>{subtitle}</p>
-    </div>
-    """
+    return (
+        f'<div class="posco-hero">'
+        f"<h1>{title}</h1>"
+        f"<p>{subtitle}</p>"
+        f"</div>"
+    )
 
 
 def section_title(text):
