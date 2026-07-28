@@ -7,3 +7,8 @@
 !.env.example
 __pycache__/
 *.pyc
+
+# ── 로컬 개발 환경 (커밋하면 안 됨) ──
+.venv/
+venv/
+.pytest_cache/
