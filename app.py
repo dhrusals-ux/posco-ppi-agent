@@ -17,6 +17,9 @@ from utils.ecos_client import ECOSClient
 from utils.kosis_client import KOSISClient
 from utils.construction_catalog import get_construction_catalog, catalog_to_options
 from utils.ecos_catalog import get_catalog
+from utils.forecast import forecast_index, MAX_HORIZON
+from utils.monitor import build_monitor
+from data.steel_plant_items import STEEL_PLANT_ITEMS, get_processes, get_all_items_flat
 from data.ppi_categories import CATEGORY_FILTERS, filter_catalog_by_category
 from utils.theme import (
     inject_theme, kpi_card, hero_header, section_title, live_badge,
@@ -274,8 +277,9 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ═══════════════════════════════════════════
 # 탭 정의 (7개)
 # ═══════════════════════════════════════════
-(tab_ai, tab_ppi, tab_cci, tab_multi, tab_scn,
- tab_port, tab_heat, tab_share) = st.tabs([
+(tab_mon, tab_ai, tab_ppi, tab_cci, tab_multi, tab_scn,
+ tab_port, tab_heat, tab_fcst, tab_share) = st.tabs([
+    "📡 품목 모니터링",
     "🤖 AI Agent 환산",
     "🔍 설비별 PPI 조회",
     "🏗️ 공사비 물가보정",
@@ -283,6 +287,7 @@ st.markdown("<br>", unsafe_allow_html=True)
     "🧪 시나리오 분석",
     "📦 포트폴리오 환산",
     "🗺️ 히트맵 & 상관관계",
+    "🔮 물가 예측",
     "🔗 공유/내보내기",
 ])
 
@@ -340,6 +345,169 @@ def period_preset_buttons(key_prefix: str, default_start="201501", default_end="
         end = st.text_input("종료 (YYYYMM)", key=end_key)
 
     return start, end
+
+
+
+# =========================================================
+# Tab: \U0001F4E1 품목 모니터링 (철강 플랜트 공정별)
+# =========================================================
+with tab_mon:
+    st.markdown(section_title("\U0001F4E1 철강 플랜트 설비 품목 물가 모니터링"), unsafe_allow_html=True)
+    st.caption(
+        "한국은행 ECOS 생산자물가지수를 자동으로 불러와 공정별 주요 설비 품목의 월별 추이를 "
+        "한눈에 확인합니다. **매월 ECOS 발표가 반영되므로 수동 업데이트가 필요 없습니다.**"
+    )
+
+    mon_catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+    if mon_catalog is None or len(mon_catalog) == 0:
+        st.error("ECOS 카탈로그 로드 실패 — 사이드바에서 인증키를 확인하세요.")
+    else:
+        csel1, csel2 = st.columns([2, 1])
+        with csel1:
+            proc_options = ["\U0001F310 전체"] + get_processes()
+            sel_proc = st.radio("공정 선택", proc_options, horizontal=True, key="mon_proc")
+        with csel2:
+            mon_months = st.selectbox("조회 기간", [12, 24, 36, 60], index=1,
+                                      format_func=lambda x: f"최근 {x}개월", key="mon_months")
+
+        # 대상 품목 결정
+        if sel_proc == "\U0001F310 전체":
+            target_items, dedup = [], set()
+            for _it in get_all_items_flat():
+                if _it["label"] in dedup:
+                    continue
+                dedup.add(_it["label"])
+                target_items.append(_it)
+        else:
+            target_items = STEEL_PLANT_ITEMS.get(sel_proc, [])
+
+        st.caption(f"\U0001F4CC 대상 품목 **{len(target_items)}개** · 공정: {sel_proc}")
+
+        _end = datetime.now().strftime("%Y%m")
+        _start_dt = datetime.now().replace(day=1) - pd.Timedelta(days=31 * (mon_months + 2))
+        _start = _start_dt.strftime("%Y%m")
+
+        if st.button("\U0001F4E1 모니터링 실행", type="primary", use_container_width=True, key="mon_run"):
+            with st.spinner(f"ECOS에서 {len(target_items)}개 품목을 조회하는 중..."):
+                try:
+                    mon_res = build_monitor(get_client(), target_items, mon_catalog, _start, _end)
+                    st.session_state["mon_result"] = {"res": mon_res, "proc": sel_proc,
+                                                      "months": mon_months}
+                except Exception as e:
+                    st.error(f"\u274C 모니터링 실패: {e}")
+                    st.session_state.pop("mon_result", None)
+
+        if "mon_result" in st.session_state:
+            mr = st.session_state["mon_result"]
+            res = mr["res"]
+            rows = res["rows"]
+
+            if not rows:
+                st.warning("조회된 품목이 없습니다. 품목 키워드를 조정해야 할 수 있습니다.")
+            else:
+                # 요약 KPI — 상승/하락 품목 수
+                ups = sum(1 for r in rows if (r.get("yoy") or 0) > 0)
+                downs = sum(1 for r in rows if (r.get("yoy") or 0) < 0)
+                avg_yoy = pd.Series([r["yoy"] for r in rows if r.get("yoy") is not None]).mean()
+                latest_period = rows[0].get("period") or "-"
+
+                k1, k2, k3, k4 = st.columns(4)
+                k1.markdown(kpi_card("조회 품목", f"{len(rows)}개",
+                                     delta=mr["proc"], icon="\U0001F4E6"), unsafe_allow_html=True)
+                k2.markdown(kpi_card("전년비 상승", f"{ups}개",
+                                     delta="YoY > 0", delta_type="up", icon="\U0001F4C8"), unsafe_allow_html=True)
+                k3.markdown(kpi_card("전년비 하락", f"{downs}개",
+                                     delta="YoY < 0", delta_type="down", icon="\U0001F4C9"), unsafe_allow_html=True)
+                k4.markdown(kpi_card("평균 전년비",
+                                     f"{avg_yoy:+.2f}%" if pd.notna(avg_yoy) else "-",
+                                     delta=f"기준 {latest_period}", delta_type="neutral",
+                                     icon="\U0001F4CA", highlight=True), unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(section_title("\U0001F4CB 품목별 현황"), unsafe_allow_html=True)
+
+                def _arrow(v):
+                    if v is None:
+                        return "-"
+                    if v > 1.0:
+                        return f"🔴 +{v:.2f}%"
+                    if v > 0:
+                        return f"🟠 +{v:.2f}%"
+                    if v < -1.0:
+                        return f"🔵 {v:.2f}%"
+                    if v < 0:
+                        return f"🟢 {v:.2f}%"
+                    return "⚪ 0.00%"
+
+                tbl = pd.DataFrame([{
+                    "품목": r["label"],
+                    "ECOS 품목명": r["ecos_name"],
+                    "코드": r["code"],
+                    "최신지수": round(r["latest"], 2) if r["latest"] is not None else None,
+                    "전월비": _arrow(r["mom"]),
+                    "전년동월비": _arrow(r["yoy"]),
+                    "기준시점": r["period"],
+                    "비고": r["note"],
+                } for r in rows])
+
+                st.dataframe(tbl, use_container_width=True, hide_index=True)
+                st.caption("🔴 +1%↑ · 🟠 상승 · ⚪ 보합 · 🟢 하락 · 🔵 -1%↓")
+
+                tbl_num = pd.DataFrame([{
+                    "품목": r["label"], "ECOS품목명": r["ecos_name"], "코드": r["code"],
+                    "최신지수": r["latest"], "전월비(%)": r["mom"],
+                    "전년동월비(%)": r["yoy"], "기준시점": r["period"], "비고": r["note"],
+                } for r in rows]).round(2)
+                csv = tbl_num.to_csv(index=False).encode("utf-8-sig")
+                st.download_button("\U0001F4E5 현황 CSV 다운로드", csv,
+                    f"품목모니터링_{latest_period}.csv", "text/csv",
+                    use_container_width=True, key="mon_csv")
+
+                # 추이 차트
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(section_title("\U0001F4C8 품목별 월별 추이"), unsafe_allow_html=True)
+
+                pick = st.multiselect(
+                    "차트에 표시할 품목 (최대 6개 권장)",
+                    [r["label"] for r in rows],
+                    default=[r["label"] for r in rows[:4]],
+                    key="mon_pick",
+                )
+                if pick:
+                    fig = go.Figure()
+                    palette = [POSCO_COLORS["primary"], POSCO_COLORS["accent"],
+                               POSCO_COLORS["danger"], "#10B981", "#8B5CF6", "#F59E0B",
+                               "#06B6D4", "#EC4899"]
+                    for i, r in enumerate([x for x in rows if x["label"] in pick]):
+                        df_s = res["series"].get(r["code"])
+                        if df_s is None or len(df_s) == 0:
+                            continue
+                        d = df_s.copy()
+                        d["TIME_DT"] = pd.to_datetime(d["TIME"].astype(str), format="%Y%m")
+                        fig.add_trace(go.Scatter(
+                            x=d["TIME_DT"], y=d["DATA_VALUE"], mode="lines",
+                            name=r["label"],
+                            line=dict(color=palette[i % len(palette)], width=2.2),
+                            hovertemplate="<b>%{x|%Y-%m}</b><br>" + r["label"] + ": %{y:.2f}<extra></extra>",
+                        ))
+                    fig.add_hline(y=100, line_dash="dash", line_color=POSCO_COLORS["neutral_500"],
+                                  annotation_text="2020 기준 (100)")
+                    fig.update_layout(
+                        title=f"{mr['proc']} 품목 지수 추이 (최근 {mr['months']}개월)",
+                        yaxis_title="지수 (2020=100)", height=520, hovermode="x unified",
+                        xaxis=dict(rangeslider=dict(visible=True, thickness=0.05)),
+                        legend=dict(orientation="h", y=1.02, x=0),
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                if res["unresolved"]:
+                    with st.expander(f"\u26A0\uFE0F 매칭되지 않은 품목 {len(res['unresolved'])}개"):
+                        st.write(", ".join(res["unresolved"]))
+                        st.caption(
+                            "ECOS 품목명과 키워드가 다를 수 있습니다. "
+                            "`data/steel_plant_items.py`의 keywords를 실제 품목명에 맞게 보완하세요. "
+                            "'설비별 PPI 조회' 탭에서 실제 품목명을 검색해 확인할 수 있습니다."
+                        )
 
 
 # ═══════════════════════════════════════════
@@ -1922,6 +2090,139 @@ with tab_heat:
             "💡 해석: 상관이 높은 품목끼리는 같이 움직여 **리스크 집중**. "
             "낮거나 음(-)의 상관 품목을 섞으면 **포트폴리오 분산 효과**."
         )
+
+
+
+# =========================================================
+# Tab: \U0001F52E 물가 예측 (과거 추세 기반)
+# =========================================================
+with tab_fcst:
+    st.markdown(section_title("\U0001F52E 물가지수 예측 (과거 추세 기반)"), unsafe_allow_html=True)
+    st.warning(
+        "\u26A0\uFE0F **예측값은 과거 추세의 연장일 뿐, 확정값이 아닙니다.** "
+        "원자재 급등·정책 변화 등 외부 충격은 반영되지 않습니다. "
+        "미래 투자 계획의 **참고 지표**로만 활용하세요."
+    )
+
+    src = st.radio(
+        "예측 대상",
+        ["\U0001F3ED 설비비 (ECOS PPI)", "\U0001F3D7\uFE0F 공사비 (KOSIS 건설공사비지수)"],
+        horizontal=True, key="fcst_src",
+    )
+    is_ecos = src.startswith("\U0001F3ED")
+
+    fcst_code, fcst_name = None, None
+    if is_ecos:
+        catalog_f = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+        if catalog_f is None or len(catalog_f) == 0:
+            st.error("ECOS 카탈로그 로드 실패")
+        else:
+            kw = st.text_input("품목 검색", placeholder="예: 변압기, 펌프, 형강", key="fcst_kw")
+            if kw.strip():
+                m = catalog_f[catalog_f["ITEM_NAME"].astype(str).str.contains(kw.strip(), na=False)]
+                if len(m) > 0:
+                    opts = m.apply(lambda r: f"{r['ITEM_NAME']} [{r['ITEM_CODE']}]", axis=1).tolist()
+                    sel = st.selectbox(f"품목 ({len(m)}개)", opts, key="fcst_ecos_sel")
+                    idx = opts.index(sel)
+                    fcst_code = str(m.iloc[idx]["ITEM_CODE"])
+                    fcst_name = str(m.iloc[idx]["ITEM_NAME"])
+                else:
+                    st.warning("매칭 품목 없음")
+    else:
+        _kk = os.getenv("KOSIS_API_KEY", "").strip()
+        if not _kk:
+            st.info("공사비 예측을 쓰려면 사이드바에 KOSIS 키가 필요합니다.")
+        else:
+            cat_f = get_construction_catalog(api_key=_kk)
+            opts_c = catalog_to_options(cat_f)
+            if opts_c:
+                labels = [f"{o['name']} [{o['code']}]" for o in opts_c]
+                sel = st.selectbox(f"공종 ({len(opts_c)}개)", labels, key="fcst_cci_sel")
+                i = labels.index(sel)
+                fcst_code = opts_c[i]["code"]; fcst_name = opts_c[i]["name"]
+
+    c1, c2 = st.columns(2)
+    horizon = c1.slider("예측 기간 (개월)", 1, MAX_HORIZON, 12, key="fcst_h")
+    use_seasonal = c2.checkbox("계절성 반영 (24개월 이상 데이터 권장)", value=True, key="fcst_seasonal")
+
+    if st.button("\U0001F52E 예측 실행", type="primary", use_container_width=True, key="fcst_run"):
+        if not fcst_code:
+            st.warning("예측할 품목/공종을 선택하세요.")
+        else:
+            try:
+                client_f = get_client() if is_ecos else KOSISClient(api_key=os.getenv("KOSIS_API_KEY"))
+                hist_df = client_f.get_ppi(fcst_code, "201501", datetime.now().strftime("%Y%m"))
+                if len(hist_df) < 6:
+                    st.error("예측에 필요한 과거 데이터가 부족합니다(최소 6개월).")
+                else:
+                    res_f = forecast_index(hist_df, horizon=horizon, seasonal=use_seasonal)
+                    st.session_state["fcst_result"] = {
+                        "name": fcst_name, "code": fcst_code, "is_ecos": is_ecos, "res": res_f,
+                    }
+            except Exception as e:
+                st.error(f"\u274C 예측 실패: {e}")
+                st.session_state.pop("fcst_result", None)
+
+    if "fcst_result" in st.session_state:
+        fr = st.session_state["fcst_result"]
+        resf = fr["res"]
+        hist, fc, lo, hi = resf["history"], resf["forecast"], resf["lower"], resf["upper"]
+
+        st.caption(f"\U0001F4D0 방법: {resf['method']}")
+
+        last_v = float(hist.iloc[-1]); end_v = float(fc.iloc[-1])
+        chg = (end_v / last_v - 1) * 100
+        k1, k2, k3 = st.columns(3)
+        k1.markdown(kpi_card("현재 지수", f"{last_v:.2f}",
+                             delta=hist.index[-1].strftime("%Y-%m"), icon="\U0001F4CD"), unsafe_allow_html=True)
+        k2.markdown(kpi_card(f"{len(fc)}개월 후 예측", f"{end_v:.2f}",
+                             delta=f"{chg:+.2f}%", delta_type="up" if chg > 0 else "down",
+                             icon="\U0001F52E", highlight=True), unsafe_allow_html=True)
+        k3.markdown(kpi_card("예측 범위", f"{float(lo.iloc[-1]):.1f}~{float(hi.iloc[-1]):.1f}",
+                             delta="95% 신뢰구간", delta_type="neutral", icon="\U0001F4CA"), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=list(hi.index) + list(lo.index[::-1]),
+            y=list(hi.values) + list(lo.values[::-1]),
+            fill="toself", fillcolor="rgba(0,94,184,0.12)",
+            line=dict(color="rgba(0,0,0,0)"), name="95% 신뢰구간", hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=hist.index, y=hist.values, mode="lines", name="과거 실측",
+            line=dict(color=POSCO_COLORS["primary"], width=2.5),
+            hovertemplate="<b>%{x|%Y-%m}</b><br>실측: %{y:.2f}<extra></extra>",
+        ))
+        fc_x = [hist.index[-1]] + list(fc.index)
+        fc_y = [float(hist.iloc[-1])] + list(fc.values)
+        fig.add_trace(go.Scatter(
+            x=fc_x, y=fc_y, mode="lines+markers", name="예측",
+            line=dict(color=POSCO_COLORS["danger"], width=2.5, dash="dash"),
+            marker=dict(size=5),
+            hovertemplate="<b>%{x|%Y-%m}</b><br>예측: %{y:.2f}<extra></extra>",
+        ))
+        fig.update_layout(
+            title=f"{fr['name']} 지수 예측 ({len(fc)}개월)",
+            yaxis_title="지수 (2020=100)", height=500, hovermode="x unified",
+            legend=dict(orientation="h", y=1.02, x=0),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        with st.expander("\U0001F4CB 예측값 상세"):
+            tblf = pd.DataFrame({
+                "시점": [d.strftime("%Y-%m") for d in fc.index],
+                "예측 지수": fc.round(2).values,
+                "하한(95%)": lo.round(2).values,
+                "상한(95%)": hi.round(2).values,
+            })
+            st.dataframe(tblf, use_container_width=True, hide_index=True)
+            csvf = tblf.to_csv(index=False).encode("utf-8-sig")
+            st.download_button("\U0001F4E5 예측 CSV", csvf,
+                f"예측_{fr['name']}_{len(fc)}개월.csv", "text/csv",
+                use_container_width=True, key="fcst_csv")
+
+        st.caption("\u26A0\uFE0F " + resf["warning"])
 
 
 # ═══════════════════════════════════════════
