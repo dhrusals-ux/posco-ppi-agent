@@ -29,6 +29,30 @@ def _load_raw(api_key: Optional[str] = None) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+_PROCESS_CACHE: dict = {}
+_PROCESS_CACHE_TTL = 3600  # 초
+
+
+def _process_cached(api_key: str) -> pd.DataFrame:
+    """
+    Streamlit 없는 환경(FastAPI 등 장기 실행 서버)용 TTL 캐시.
+    없으면 매 요청마다 KOSIS 전체 분류를 다시 받게 되어 트래픽 한도(에러 31)에 걸린다.
+    """
+    import time
+
+    hit = _PROCESS_CACHE.get(api_key)
+    if hit is not None:
+        ts, df = hit
+        if time.monotonic() - ts < _PROCESS_CACHE_TTL:
+            return df
+
+    df = _load_raw(api_key)
+    # 빈 결과는 캐시하지 않는다 (일시적 오류를 1시간 고정시키지 않기 위해)
+    if df is not None and len(df) > 0:
+        _PROCESS_CACHE[api_key] = (time.monotonic(), df)
+    return df
+
+
 if HAS_ST:
     @st.cache_data(ttl=3600, show_spinner=False)
     def get_construction_catalog(api_key: Optional[str] = None) -> pd.DataFrame:
@@ -36,7 +60,8 @@ if HAS_ST:
         return _load_raw(api_key)
 else:
     def get_construction_catalog(api_key: Optional[str] = None) -> pd.DataFrame:
-        return _load_raw(api_key)
+        """공종 카탈로그 (프로세스 TTL 캐시)"""
+        return _process_cached(api_key or os.getenv("KOSIS_API_KEY", ""))
 
 
 def catalog_to_options(catalog: pd.DataFrame) -> list:
