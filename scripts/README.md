@@ -109,7 +109,34 @@ $env:ECOS_API_KEY="키"; .\.venv\Scripts\python.exe -m scripts.verify_items
 지수가 여러 줄로 나오기 때문입니다.
 
 `--csv result.csv` 를 붙이면 결과를 엑셀로 열어볼 수 있습니다.
-실제 품목명은 앱의 '설비별 PPI 조회' 탭에서도 검색할 수 있습니다.
+
+## 실제 ECOS 품목명을 눈으로 고르기
+
+`verify_items`가 "실패"라고 알려줘도, **어떤 이름으로 고쳐야 하는지**는 실제 카탈로그를
+봐야 압니다. 그럴 때 씁니다.
+
+```bash
+$env:ECOS_API_KEY="키"
+
+# 설비 투자비 보정에 쓰이는 계열만 (기계·전기·금속·비금속·화학·에너지)
+.\.venv\Scripts\python.exe -m scripts.dump_catalog --preset equipment
+
+# 기계 계열만 / 전기 계열만
+.\.venv\Scripts\python.exe -m scripts.dump_catalog --preset machinery
+.\.venv\Scripts\python.exe -m scripts.dump_catalog --preset electrical
+
+# 이름으로 검색
+.\.venv\Scripts\python.exe -m scripts.dump_catalog --grep "일반목적|특수목적|금속가공"
+
+# 계층 구조로 보기 (상위 분류 → 세부 품목)
+.\.venv\Scripts\python.exe -m scripts.dump_catalog --preset machinery --tree
+
+# 전체를 엑셀로 저장해서 훑어보기
+.\.venv\Scripts\python.exe -m scripts.dump_catalog --csv catalog.csv
+```
+
+CSV로 저장한 뒤 원하는 품목을 알려주시면 `steel_plant_items.py`에 정확한 이름으로
+넣겠습니다. 실제 품목명은 앱의 '설비별 PPI 조회' 탭에서도 검색할 수 있습니다.
 
 > 관심 품목은 현재 **53개**(중복 제거 기준)이고 품목당 API를 1회 호출합니다.
 > 더 늘리면 실행 시간과 호출 수가 비례해 늘어납니다.
