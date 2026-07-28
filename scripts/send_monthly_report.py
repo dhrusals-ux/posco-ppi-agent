@@ -69,8 +69,11 @@ def main() -> int:
         print("[오류] ECOS 품목 카탈로그를 불러오지 못했습니다.", file=sys.stderr)
         return 2
 
-    items = get_all_items_flat()
-    print(f"관심 품목 {len(items)}개 조회 중...")
+    # dedup=True: 같은 품목이 여러 공정에 걸려 있어도 한 번만 조회한다.
+    # 품목마다 개별 API 호출이 발생하므로 중복을 없애야 호출 수가 줄고
+    # 리포트 표에 같은 품목이 두 번 나오지 않는다.
+    items = get_all_items_flat(dedup=True)
+    print(f"관심 품목 {len(items)}개 조회 중... (품목당 API 1회)")
 
     report = build_report(
         client, catalog, items,
