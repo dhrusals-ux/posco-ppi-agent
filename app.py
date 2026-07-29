@@ -20,6 +20,7 @@ from utils.kosis_client import KOSISClient
 from utils.construction_catalog import get_construction_catalog, catalog_to_options
 from utils.ecos_catalog import get_catalog
 from utils.forecast import forecast_index, MAX_HORIZON
+from utils.forecast_eval import backtest, horizon_frame, to_frame
 from utils.monitor import build_monitor
 from utils.batch_adjust import (
     read_table, guess_columns, suggest_matches, approval_blockers,
@@ -2800,6 +2801,109 @@ with tab_fcst:
                 use_container_width=True, key="fcst_csv")
 
         st.caption("\u26A0\uFE0F " + resf["warning"])
+
+        # \u2500\u2500 \uBC31\uD14C\uC2A4\uD2B8: \uC774 \uC608\uCE21\uC774 \uACFC\uAC70\uC5D0 \uC5BC\uB9C8\uB098 \uB9DE\uC558\uB098 \u2500\u2500
+        st.divider()
+        st.markdown(section_title("\uC774 \uC608\uCE21\uC774 \uACFC\uAC70\uC5D0 \uB9DE\uC558\uB294\uAC00 (\uBC31\uD14C\uC2A4\uD2B8)"), unsafe_allow_html=True)
+        st.caption(
+            "\uC2DC\uC810\uC744 \uB4A4\uB85C \uC62E\uAE30\uBA70 '\uD559\uC2B5 \u2192 \uC608\uCE21 \u2192 \uC2E4\uCE21 \uBE44\uAD50'\uB97C \uBC18\uBCF5\uD569\uB2C8\uB2E4(\uC804\uC9C4 \uAC80\uC99D). "
+            "**naive(\uB9C8\uC9C0\uB9C9 \uAC12 \uADF8\uB300\uB85C \uC720\uC9C0)** \uB97C \uC774\uAE30\uC9C0 \uBABB\uD558\uBA74 \uC608\uCE21\uC774 \uAC12\uC744 \uB354\uD558\uC9C0 \uBABB\uD55C\uB2E4\uB294 \uB73B\uC774\uBBC0\uB85C, "
+            "\uADF8 \uACBD\uC6B0 \uCD5C\uC2E0 \uC2E4\uCE21\uCE58\uB97C \uADF8\uB300\uB85C \uC4F0\uB294 \uD3B8\uC774 \uB0AB\uC2B5\uB2C8\uB2E4."
+        )
+
+        bt_folds = st.slider("\uAC80\uC99D \uD69F\uC218", 2, 10, 6, key="bt_folds",
+                             help="\uB9CE\uC744\uC218\uB85D \uC2E0\uB8B0\uB3C4\uAC00 \uB192\uC9C0\uB9CC \uACFC\uAC70 \uB370\uC774\uD130\uAC00 \uB354 \uD544\uC694\uD569\uB2C8\uB2E4.")
+
+        if st.button("\uBC31\uD14C\uC2A4\uD2B8 \uC2E4\uD589", use_container_width=True, key="bt_run"):
+            with st.spinner("\uACFC\uAC70 \uC2DC\uC810\uC73C\uB85C \uB418\uB3CC\uB824 \uAC80\uC99D \uC911..."):
+                try:
+                    client_b = (get_client() if fr["is_ecos"]
+                                else KOSISClient(api_key=os.getenv("KOSIS_API_KEY")))
+                    hist_b = client_b.get_ppi(fr["code"], "200501",
+                                              datetime.now().strftime("%Y%m"))
+                    st.session_state["bt_result"] = backtest(
+                        hist_b, horizon=len(fc), folds=bt_folds)
+                except Exception as e:
+                    st.error(f"\uBC31\uD14C\uC2A4\uD2B8 \uC2E4\uD328: {e}")
+                    st.session_state.pop("bt_result", None)
+
+        if "bt_result" in st.session_state:
+            bt = st.session_state["bt_result"]
+
+            if not bt["ok"]:
+                st.warning(bt["reason"])
+            else:
+                best = bt["methods"].get(bt["best"], {})
+                b1, b2, b3 = st.columns(3)
+                b1.markdown(kpi_card(
+                    "\uAD8C\uC7A5 \uBC29\uBC95", best.get("label", "\u2014"),
+                    sub=f"\uAC80\uC99D {bt['folds_used']}\uD68C \u00B7 \uACFC\uAC70 {bt['n']}\uAC1C\uC6D4",
+                ), unsafe_allow_html=True)
+                b2.markdown(kpi_card(
+                    "\uD3C9\uADE0 \uC624\uCC28(MAPE)",
+                    f"{best['mape']:.2f}" if best.get("mape") is not None else "\u2014",
+                    unit="%", sub=f"\uC608\uCE21 {bt['horizon']}\uAC1C\uC6D4 \uD3C9\uADE0",
+                ), unsafe_allow_html=True)
+                _cov = best.get("coverage")
+                b3.markdown(kpi_card(
+                    "95% \uBC34\uB4DC \uC801\uC911\uB960", f"{_cov:.0f}" if _cov is not None else "\u2014",
+                    unit="%", sub="95%\uC5D0 \uBABB \uBBF8\uCE58\uBA74 \uAD6C\uAC04\uC774 \uC881\uB2E4\uB294 \uB73B",
+                    delta_type="up" if (_cov or 0) < 80 else "neutral",
+                ), unsafe_allow_html=True)
+
+                if bt["best"] == "naive":
+                    st.warning(f"**{bt['best_reason']}**")
+                else:
+                    st.success(f"{best.get('label')} \u2014 {bt['best_reason']}")
+
+                st.markdown("##### \uBC29\uBC95\uBCC4 \uBE44\uAD50")
+                st.dataframe(
+                    to_frame(bt), use_container_width=True, hide_index=True,
+                    column_config={
+                        "MAPE(%)": st.column_config.NumberColumn(
+                            "MAPE(%)", format="%.3f",
+                            help="\uD3C9\uADE0 \uC808\uB300 \uBC31\uBD84\uC728 \uC624\uCC28 \u2014 \uB0AE\uC744\uC218\uB85D \uC815\uD655"),
+                        "MAE": st.column_config.NumberColumn("MAE", format="%.3f"),
+                        "RMSE": st.column_config.NumberColumn("RMSE", format="%.3f"),
+                        "95%\uBC34\uB4DC \uC801\uC911\uB960(%)": st.column_config.NumberColumn(
+                            "95%\uBC34\uB4DC \uC801\uC911\uB960(%)", format="%.1f",
+                            help="\uC2E4\uC81C\uAC12\uC774 \uC2E0\uB8B0\uAD6C\uAC04 \uC548\uC5D0 \uB4E0 \uBE44\uC728. 95%\uC5D0 \uAC00\uAE4C\uC6CC\uC57C \uC815\uC9C1\uD55C \uAD6C\uAC04"),
+                        "naive \uB300\uBE44 \uAC1C\uC120(%)": st.column_config.NumberColumn(
+                            "naive \uB300\uBE44 \uAC1C\uC120(%)", format="%.1f",
+                            help="\uC591\uC218\uBA74 naive\uBCF4\uB2E4 \uC815\uD655, \uC74C\uC218\uBA74 naive\uB9CC \uBABB\uD558\uB2E4\uB294 \uB73B"),
+                        "naive \uC0C1\uB300 \uC2B9\uB960": st.column_config.TextColumn(
+                            "naive \uC0C1\uB300 \uC2B9\uB960",
+                            help="\uAC80\uC99D \uD68C\uCC28 \uC911 naive\uB97C \uC774\uAE34 \uD69F\uC218. \uD3C9\uADE0\uB9CC \uC88B\uACE0 \uC2B9\uB960\uC774 \uB0AE\uC73C\uBA74 \uC6B0\uC5F0\uC77C \uC218 \uC788\uC74C"),
+                    },
+                )
+
+                st.markdown("##### \uC608\uCE21 \uAE30\uAC04\uBCC4 \uC624\uCC28 \u2014 \uBA87 \uAC1C\uC6D4\uAE4C\uC9C0 \uC4F8 \uB9CC\uD55C\uAC00")
+                hz = horizon_frame(bt, bt["best"])
+                if len(hz):
+                    figb = go.Figure()
+                    figb.add_trace(go.Bar(
+                        x=hz["\uC608\uCE21 \uAC1C\uC6D4"], y=hz["MAPE(%)"],
+                        marker_color=POSCO_COLORS["primary"],
+                        hovertemplate="%{x}\uAC1C\uC6D4 \uB4A4<br>MAPE %{y:.2f}%<extra></extra>",
+                    ))
+                    figb.update_layout(
+                        xaxis_title="\uC608\uCE21 \uAC1C\uC6D4", yaxis_title="MAPE (%)",
+                        height=300, showlegend=False,
+                        margin=dict(l=48, r=20, t=20, b=40),
+                    )
+                    st.plotly_chart(figb, use_container_width=True)
+                    st.caption(
+                        "\uBA40\uC5B4\uC9C8\uC218\uB85D \uC624\uCC28\uAC00 \uCEE4\uC9C0\uB294 \uAC8C \uC815\uC0C1\uC785\uB2C8\uB2E4. "
+                        "\uC624\uCC28\uAC00 \uAE09\uACA9\uD788 \uCEE4\uC9C0\uB294 \uC9C0\uC810 \uC774\uD6C4\uB294 \uCC38\uACE0 \uAC00\uCE58\uAC00 \uB0AE\uC2B5\uB2C8\uB2E4."
+                    )
+
+                for note in bt["notes"]:
+                    st.caption(f"\u203B {note}")
+
+                st.caption(
+                    "\uBC31\uD14C\uC2A4\uD2B8\uAC00 \uC88B\uC544\uB3C4 \uBBF8\uB798\uB97C \uBCF4\uC7A5\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uACFC\uAC70\uC5D0 \uC5C6\uB358 \uCDA9\uACA9"
+                    "(\uC6D0\uC790\uC7AC \uAE09\uB4F1\u00B7\uC815\uCC45 \uBCC0\uD654)\uC740 \uC5B4\uB5A4 \uBC29\uBC95\uB3C4 \uC608\uCE21\uD558\uC9C0 \uBABB\uD569\uB2C8\uB2E4."
+                )
 
 
 # ═══════════════════════════════════════════

@@ -33,6 +33,7 @@ from utils.batch_adjust import (
 from utils.construction_catalog import catalog_to_options, get_construction_catalog
 from utils.ecos_catalog import get_catalog
 from utils.forecast import MAX_HORIZON, forecast_index
+from utils.forecast_eval import backtest as bt_backtest
 
 KST = timezone(timedelta(hours=9))
 
@@ -494,3 +495,51 @@ def forecast_construction(
 ):
     """건설공사비지수 예측"""
     return _forecast(client, code, horizon, "KOSIS")
+
+
+def _backtest(client, code: str, horizon: int, folds: int, label: str) -> dict:
+    try:
+        hist = client.get_ppi(code, "200501", datetime.now(KST).strftime("%Y%m"))
+    except Exception as e:
+        raise upstream_error(e, f"{label} {code} 조회 실패") from e
+
+    res = bt_backtest(hist, horizon=horizon, folds=folds)
+    if not res["ok"]:
+        raise HTTPException(status_code=422, detail=res["reason"])
+
+    res["code"] = code
+    res["disclaimer"] = S.DISCLAIMER
+    res["caveat"] = (
+        "백테스트가 좋아도 미래를 보장하지 않습니다. 과거에 없던 충격"
+        "(원자재 급등·정책 변화)은 어떤 방법도 예측하지 못합니다."
+    )
+    return res
+
+
+@app.get("/forecast/backtest/equipment/{code}", tags=["예측"])
+def backtest_equipment(
+    code: str,
+    horizon: int = Query(12, ge=1, le=MAX_HORIZON),
+    folds: int = Query(6, ge=2, le=12),
+    client=Depends(get_ecos_client),
+):
+    """
+    예측 검증 (walk-forward 백테스트).
+
+    naive(마지막 값 유지)를 기준으로 각 방법을 비교한다. naive를 이기지 못하면
+    그 품목에서는 예측이 값을 더하지 못한다는 뜻이고, best가 "naive"로 돌아온다.
+    프론트엔드는 best와 best_reason을 그대로 보여줘야 한다 — 검증 결과를 숨기고
+    예측값만 보여주면 사용자는 근거 없이 신뢰하게 된다.
+    """
+    return _backtest(client, code, horizon, folds, "ECOS")
+
+
+@app.get("/forecast/backtest/construction/{code}", tags=["예측"])
+def backtest_construction(
+    code: str,
+    horizon: int = Query(12, ge=1, le=MAX_HORIZON),
+    folds: int = Query(6, ge=2, le=12),
+    client=Depends(get_kosis_client),
+):
+    """건설공사비지수 예측 검증"""
+    return _backtest(client, code, horizon, folds, "KOSIS")
