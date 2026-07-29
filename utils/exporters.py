@@ -172,12 +172,28 @@ def generate_pdf_report(
         story.append(t)
 
     story.append(Spacer(1, 20))
+
+    # 면책 문구 (필수) — 이 산식은 「국가계약법」상 계약금액조정 산식과 다르다.
+    # 공식 계약 근거로 오용되면 실제 분쟁이 되므로 출력물에 항상 박아둔다.
+    disclaimer = ParagraphStyle(
+        "Disclaimer", parent=body_style, fontSize=8, leading=11,
+        textColor=colors.HexColor("#B91C1C"), alignment=0,
+        borderColor=colors.HexColor("#FCA5A5"), borderWidth=0.5,
+        borderPadding=6, spaceBefore=6, spaceAfter=10,
+    )
+    story.append(Paragraph(
+        "[면책] 본 산출물은 <b>내부 투자비 추정·검토용</b>이며, 「국가계약법」상 "
+        "계약금액조정(물가변동) 산식과 다르므로 <b>공식 계약 근거로 사용할 수 없습니다.</b>",
+        disclaimer,
+    ))
+
     footer = ParagraphStyle(
         "Footer", parent=body_style, fontSize=8,
         textColor=colors.HexColor("#94A3B8"), alignment=1,
     )
     story.append(Paragraph(
-        "한국은행 ECOS API 기반 · POSCO 투자엔지니어링실 교육용 데모",
+        "한국은행 ECOS · 한국건설기술연구원 건설공사비지수(KOSIS) 실시간 조회 기반 · "
+        "POSCO 투자엔지니어링실 내부 검토용",
         footer,
     ))
 

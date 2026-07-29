@@ -4,7 +4,9 @@ ECOS API + AI Agent + 시나리오 분석 + 포트폴리오 환산 + 고급 시�
 """
 import os
 import io
-from datetime import datetime
+import json
+import re
+from datetime import datetime, timedelta
 
 import pandas as pd
 import numpy as np
@@ -14,8 +16,19 @@ import plotly.express as px
 
 from agents.ppi_agent import run_ppi_agent
 from utils.ecos_client import ECOSClient
-from utils.demo_data import DemoECOSClient
+from utils.kosis_client import KOSISClient
+from utils.construction_catalog import get_construction_catalog, catalog_to_options
 from utils.ecos_catalog import get_catalog
+from utils.forecast import forecast_index, MAX_HORIZON
+from utils.forecast_eval import backtest, horizon_frame, to_frame
+from utils.monitor import build_monitor
+from utils.batch_adjust import (
+    read_table, guess_columns, suggest_matches, approval_blockers,
+    run_batch, summarize, MAX_ROWS, fmt_eok, eok_unit,
+    CONF_HIGH, CONF_MEDIUM, CONF_LOW, CONF_NONE, CONF_ICON,
+)
+from data.steel_plant_items import STEEL_PLANT_ITEMS, get_processes, get_all_items_flat
+from data import item_selection as ISEL
 from data.ppi_categories import CATEGORY_FILTERS, filter_catalog_by_category
 from utils.theme import (
     inject_theme, kpi_card, hero_header, section_title, live_badge,
@@ -41,10 +54,13 @@ pio.templates.default = "posco"
 
 
 def get_client():
-    """현재 모드에 따른 ECOS 클라이언트"""
-    if st.session_state.get("use_demo", True):
-        return DemoECOSClient()
+    """ECOS 클라이언트 (LIVE 전용)"""
     return ECOSClient()
+
+
+def get_construction_client():
+    """KOSIS(건설공사비지수) 클라이언트 (LIVE 전용) — 준비 중"""
+    return KOSISClient()
 
 
 # ═══════════════════════════════════════════
@@ -65,94 +81,124 @@ if "loaded_qp" not in st.session_state:
 # 사이드바
 # ═══════════════════════════════════════════
 with st.sidebar:
-    st.markdown("### ⚙️ 실행 모드")
-    use_demo = st.radio(
-        "모드 선택",
-        ["📦 DEMO 모드 (API 키 불필요)", "🏦 LIVE 모드 (실제 ECOS)"],
-        index=0,
-    ).startswith("📦")
-    st.session_state["use_demo"] = use_demo
+    # 항상 LIVE(ECOS) 전용 — DEMO 제거
+    use_demo = False
+    st.session_state["use_demo"] = False
 
-    st.divider()
+    st.markdown("### 데이터 연결")
 
-    if use_demo:
-        st.success("✅ DEMO 모드 — 가상 PPI 데이터로 동작")
-        llm_provider = "none"
+    # ── ECOS 키: secrets 우선, 없으면 입력란 폴백 ──
+    ecos_from_secrets = ""
+    try:
+        ecos_from_secrets = st.secrets["ECOS_API_KEY"]
+    except Exception:
+        ecos_from_secrets = os.getenv("ECOS_API_KEY", "")
+
+    if ecos_from_secrets:
+        # 배포 환경: 키가 이미 설정됨 → 사용자는 키를 몰라도 됨
+        os.environ["ECOS_API_KEY"] = ecos_from_secrets.strip().strip('"').strip("'").strip()
+        st.success("✅ 한국은행 ECOS 연결됨")
     else:
-        st.markdown("### 🔑 API 키")
-        try:
-            default_ecos = st.secrets["ECOS_API_KEY"]
-        except Exception:
-            default_ecos = os.getenv("ECOS_API_KEY", "")
-
+        # 로컬/미설정: 입력란 폴백
+        st.info("ECOS 인증키가 설정되지 않았습니다. 아래에 입력하세요.")
         ecos_key = st.text_input(
-            "ECOS API Key", type="password", value=default_ecos,
-            help="앞뒤 따옴표·공백은 자동 제거",
+            "ECOS API Key", type="password",
+            help="관리자가 secrets에 등록하면 이 입력란은 사라집니다.",
         )
         if ecos_key:
             cleaned = ecos_key.strip().strip('"').strip("'").strip()
             os.environ["ECOS_API_KEY"] = cleaned
-            if cleaned != ecos_key:
-                st.warning(f"⚠️ 따옴표/공백 정리: {len(ecos_key)}→{len(cleaned)}자")
 
-        st.markdown("##### 🧠 LLM")
-        llm_choice = st.radio(
-            "자연어 파싱 LLM",
-            ["🆓 Gemini (추천)", "💰 OpenAI", "📐 규칙 기반"],
-            label_visibility="collapsed",
+    # ── KOSIS 키 (건설공사비지수 / 공사비 보정) ──
+    kosis_from_secrets = ""
+    try:
+        kosis_from_secrets = st.secrets["KOSIS_API_KEY"]
+    except Exception:
+        kosis_from_secrets = os.getenv("KOSIS_API_KEY", "")
+
+    if kosis_from_secrets:
+        os.environ["KOSIS_API_KEY"] = kosis_from_secrets.strip().strip('"').strip("'").strip()
+        st.success("✅ KOSIS 연결됨 (공사비)")
+    else:
+        kosis_key = st.text_input(
+            "KOSIS API Key (공사비)", type="password",
+            help="건설공사비지수 조회용 · kosis.kr 공유서비스에서 무료 발급. 없으면 공사비 탭은 비활성화됩니다.",
         )
-        if llm_choice.startswith("🆓"):
-            try:
-                default_gem = st.secrets["GEMINI_API_KEY"]
-            except Exception:
-                default_gem = os.getenv("GEMINI_API_KEY", "")
-            gk = st.text_input("Gemini Key", type="password", value=default_gem)
-            if gk:
-                os.environ["GEMINI_API_KEY"] = gk.strip().strip('"').strip("'")
-            llm_provider = "gemini"
-            # 🆕 Gemini 모델 선택 (신규 API 차단 대응)
-            gemini_model_choice = st.selectbox(
-                "Gemini 모델",
-                ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-flash-latest", "gemini-2.0-flash"],
-                index=0,
-                help="Google이 특정 모델을 차단할 경우 여기서 다른 모델로 전환하세요.",
-            )
-            os.environ["GEMINI_MODEL"] = gemini_model_choice
-        elif llm_choice.startswith("💰"):
-            try:
-                default_oai = st.secrets["OPENAI_API_KEY"]
-            except Exception:
-                default_oai = os.getenv("OPENAI_API_KEY", "")
-            ok = st.text_input("OpenAI Key", type="password", value=default_oai)
-            if ok:
-                os.environ["OPENAI_API_KEY"] = ok.strip().strip('"').strip("'")
-            llm_provider = "openai"
-        else:
-            llm_provider = "none"
-
-        st.divider()
-        st.markdown("### 🗂️ 카탈로그")
-        if os.getenv("ECOS_API_KEY"):
-            try:
-                catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
-                if catalog is not None and len(catalog) > 0:
-                    st.success(f"✅ ECOS 품목 **{len(catalog):,}개** 로드")
-                    if st.button("🔄 카탈로그 새로고침", use_container_width=True):
-                        st.cache_data.clear()
-                        st.rerun()
-                else:
-                    st.warning("카탈로그 비어있음")
-            except Exception as e:
-                st.error(f"로드 실패: {e}")
+        if kosis_key:
+            os.environ["KOSIS_API_KEY"] = kosis_key.strip().strip('"').strip("'").strip()
 
     st.divider()
-    st.markdown("### 📖 소개")
-    st.caption(
-        "**POSCO 투자엔지니어링실 교육용 데모**\n\n"
-        "한국은행 ECOS API를 활용해 과거 투자비를 "
-        "현재 시점 PPI로 자동 환산하는 AI Agent입니다."
+
+    # ── LLM (자연어 파싱 고도화, 선택) ──
+    st.markdown("### 자연어 파싱 LLM")
+    st.caption("미설정 시 규칙 기반 파서로 동작합니다.")
+    llm_choice = st.radio(
+        "LLM 선택",
+        ["📐 규칙 기반 (기본)", "🆓 Gemini", "💰 OpenAI"],
+        label_visibility="collapsed",
     )
-    st.markdown(live_badge("ECOS LIVE" if not use_demo else "DEMO"), unsafe_allow_html=True)
+    if llm_choice.startswith("🆓"):
+        try:
+            default_gem = st.secrets["GEMINI_API_KEY"]
+        except Exception:
+            default_gem = os.getenv("GEMINI_API_KEY", "")
+        if default_gem:
+            os.environ["GEMINI_API_KEY"] = default_gem.strip().strip('"').strip("'")
+            st.success("✅ Gemini 연결됨")
+        else:
+            gk = st.text_input("Gemini Key", type="password")
+            if gk:
+                os.environ["GEMINI_API_KEY"] = gk.strip().strip('"').strip("'")
+        llm_provider = "gemini"
+        gemini_model_choice = st.selectbox(
+            "Gemini 모델",
+            ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-flash-latest", "gemini-2.0-flash"],
+            index=0,
+            help="특정 모델이 차단될 경우 다른 모델로 전환하세요.",
+        )
+        os.environ["GEMINI_MODEL"] = gemini_model_choice
+    elif llm_choice.startswith("💰"):
+        try:
+            default_oai = st.secrets["OPENAI_API_KEY"]
+        except Exception:
+            default_oai = os.getenv("OPENAI_API_KEY", "")
+        if default_oai:
+            os.environ["OPENAI_API_KEY"] = default_oai.strip().strip('"').strip("'")
+            st.success("✅ OpenAI 연결됨")
+        else:
+            ok = st.text_input("OpenAI Key", type="password")
+            if ok:
+                os.environ["OPENAI_API_KEY"] = ok.strip().strip('"').strip("'")
+        llm_provider = "openai"
+    else:
+        llm_provider = "none"
+
+    st.divider()
+    st.markdown("### ECOS 품목 카탈로그")
+    if os.getenv("ECOS_API_KEY"):
+        try:
+            catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+            if catalog is not None and len(catalog) > 0:
+                st.success(f"품목 **{len(catalog):,}개** 로드됨")
+                if st.button("🔄 카탈로그 새로고침", use_container_width=True):
+                    st.cache_data.clear()
+                    st.rerun()
+            else:
+                st.warning("카탈로그 비어있음")
+        except Exception as e:
+            st.error(f"로드 실패: {e}")
+    else:
+        st.caption("ECOS 연결 후 품목 카탈로그가 표시됩니다.")
+
+    st.divider()
+    st.markdown("### 소개")
+    st.caption(
+        "**POSCO 투자엔지니어링실 투자비 물가보정 도구**\n\n"
+        "한국은행 ECOS 생산자물가지수(PPI)로 과거 설비 투자비를 "
+        "현재 시점 가치로 환산합니다."
+    )
+    st.markdown(live_badge("ECOS LIVE"), unsafe_allow_html=True)
+
 
 
 # ═══════════════════════════════════════════
@@ -160,23 +206,30 @@ with st.sidebar:
 # ═══════════════════════════════════════════
 st.markdown(
     hero_header(
-        "🏭 POSCO 투자비 물가보정 AI Agent",
-        "ECOS API × AI Agent × 시나리오 분석 × 포트폴리오 환산 — 투자엔지니어링 실무 올인원 대시보드",
+        "POSCO 투자비 물가보정 시스템",
+        "한국은행 ECOS 생산자물가지수(설비비) · 한국건설기술연구원 건설공사비지수(공사비) "
+        "실시간 조회 기반 현재가치 환산 — 투자엔지니어링실 내부 검토용",
     ),
     unsafe_allow_html=True,
 )
 
+# ── 키 미설정 게이트: ECOS 연결 전에는 본문 차단 ──
+if not os.getenv("ECOS_API_KEY"):
+    st.warning(
+        "🔌 **한국은행 ECOS 인증키가 설정되지 않았습니다.**\n\n"
+        "왼쪽 사이드바에 키를 입력하거나, 배포 환경에서는 관리자가 "
+        "`secrets.toml`(또는 Streamlit Cloud Secrets)에 `ECOS_API_KEY`를 등록해야 합니다.\n\n"
+        "→ ECOS 인증키 무료 발급: https://ecos.bok.or.kr/api/"
+    )
+    st.stop()
+
 
 # 상단 KPI 스트립 (총지수 현황)
 def fetch_top_kpi():
-    """ECOS 총지수 최신 3개월 데이터 → KPI 카드용"""
+    """ECOS 총지수 최신 데이터 → KPI 카드용"""
+    if not os.getenv("ECOS_API_KEY"):
+        return None
     try:
-        if use_demo:
-            # DEMO 데이터
-            return {
-                "total": 118.5, "yoy": 2.1, "mom": 0.3,
-                "latest_period": "2026-03", "source": "DEMO",
-            }
         client = ECOSClient()
         # 총지수 (404Y014 통계표의 '*AA')
         end = datetime.now().strftime("%Y%m")
@@ -232,16 +285,22 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════
-# 탭 정의 (7개)
+# 탭 정의 (11개)
 # ═══════════════════════════════════════════
-tab_ai, tab_ppi, tab_multi, tab_scn, tab_port, tab_heat, tab_share = st.tabs([
-    "🤖 AI Agent 환산",
-    "🔍 설비별 PPI 조회",
-    "📊 다중 설비 비교",
-    "🧪 시나리오 분석",
-    "📦 포트폴리오 환산",
-    "🗺️ 히트맵 & 상관관계",
-    "🔗 공유/내보내기",
+(tab_mon, tab_items, tab_ai, tab_batch, tab_ppi, tab_cci, tab_multi, tab_scn,
+ tab_port, tab_heat, tab_fcst, tab_share) = st.tabs([
+    "품목 모니터링",
+    "관심 품목 설정",
+    "AI Agent 환산",
+    "엑셀 일괄 보정",
+    "설비별 PPI 조회",
+    "공사비 물가보정",
+    "다중 설비 비교",
+    "시나리오 분석",
+    "포트폴리오 환산",
+    "히트맵 & 상관관계",
+    "물가 예측",
+    "공유/내보내기",
 ])
 
 
@@ -250,7 +309,7 @@ tab_ai, tab_ppi, tab_multi, tab_scn, tab_port, tab_heat, tab_share = st.tabs([
 # ═══════════════════════════════════════════
 def period_preset_buttons(key_prefix: str, default_start="201501", default_end="202612"):
     """기간 프리셋 버튼 + 시작/종료 입력 (프리셋 클릭 시 즉시 반영)"""
-    st.markdown("##### 📅 기간 설정")
+    st.markdown("##### 기간 설정")
 
     start_key = f"{key_prefix}_start_input"
     end_key = f"{key_prefix}_end_input"
@@ -300,11 +359,426 @@ def period_preset_buttons(key_prefix: str, default_start="201501", default_end="
     return start, end
 
 
+
+# =========================================================
+# Tab: \U0001F4E1 품목 모니터링 (철강 플랜트 공정별)
+# =========================================================
+with tab_mon:
+    st.markdown(section_title("철강 플랜트 설비 품목 물가 모니터링"), unsafe_allow_html=True)
+    st.caption(
+        "한국은행 ECOS 생산자물가지수를 자동으로 불러와 공정별 주요 설비 품목의 월별 추이를 "
+        "한눈에 확인합니다. **매월 ECOS 발표가 반영되므로 수동 업데이트가 필요 없습니다.**"
+    )
+
+    mon_catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+    if mon_catalog is None or len(mon_catalog) == 0:
+        st.error("ECOS 카탈로그 로드 실패 — 사이드바에서 인증키를 확인하세요.")
+    else:
+        # '관심 품목 설정' 탭에서 고른 선택이 있으면 그걸 우선 쓴다.
+        # 직접 고른 품목은 실제 ITEM_CODE를 갖고 있어 키워드 매칭이 필요 없다.
+        if "item_selection" not in st.session_state:
+            try:
+                st.session_state["item_selection"] = ISEL.load_selection() or ISEL.empty_selection()
+            except Exception:
+                st.session_state["item_selection"] = ISEL.empty_selection()
+        _mon_sel = st.session_state["item_selection"]
+        _mon_sel_total = ISEL.total_count(_mon_sel)
+
+        _src_opts = ["기본 목록 (공정별 키워드)"]
+        if _mon_sel_total:
+            _src_opts.insert(0, f"직접 선택한 품목 ({_mon_sel_total}개)")
+        _src = st.radio("품목 출처", _src_opts, horizontal=True, key="mon_src")
+        _use_selection = _src.startswith("직접 선택")
+
+        if not _mon_sel_total:
+            st.caption(
+                "'관심 품목 설정' 탭에서 ECOS 카탈로그에서 직접 고르면 여기서 선택할 수 있습니다. "
+                "직접 고른 품목은 코드가 확정되므로 매칭 실패가 발생하지 않습니다."
+            )
+
+        _proc_pool = (list(ISEL.counts(_mon_sel)) if _use_selection else get_processes())
+
+        csel1, csel2 = st.columns([2, 1])
+        with csel1:
+            proc_options = ["\U0001F310 전체"] + _proc_pool
+            sel_proc = st.radio("공정 선택", proc_options, horizontal=True, key="mon_proc")
+        with csel2:
+            mon_months = st.selectbox("조회 기간", [12, 24, 36, 60], index=1,
+                                      format_func=lambda x: f"최근 {x}개월", key="mon_months")
+
+        # 대상 품목 결정
+        if _use_selection:
+            _all_sel_items = ISEL.selection_to_items(_mon_sel)
+            if sel_proc == "\U0001F310 전체":
+                target_items, _seen = [], set()
+                for _it in _all_sel_items:
+                    if _it["code"] in _seen:
+                        continue
+                    _seen.add(_it["code"])
+                    target_items.append(_it)
+            else:
+                target_items = [i for i in _all_sel_items if i["process"] == sel_proc]
+        elif sel_proc == "\U0001F310 전체":
+            target_items, dedup = [], set()
+            for _it in get_all_items_flat():
+                if _it["label"] in dedup:
+                    continue
+                dedup.add(_it["label"])
+                target_items.append(_it)
+        else:
+            target_items = STEEL_PLANT_ITEMS.get(sel_proc, [])
+
+        st.caption(
+            f"대상 품목 **{len(target_items)}개** · 공정: {sel_proc} · "
+            f"출처: {'직접 선택' if _use_selection else '기본 목록'} "
+            f"(품목당 ECOS 호출 1회)"
+        )
+
+        _end = datetime.now().strftime("%Y%m")
+        _start_dt = datetime.now().replace(day=1) - pd.Timedelta(days=31 * (mon_months + 2))
+        _start = _start_dt.strftime("%Y%m")
+
+        if st.button("\U0001F4E1 모니터링 실행", type="primary", use_container_width=True, key="mon_run"):
+            with st.spinner(f"ECOS에서 {len(target_items)}개 품목을 조회하는 중..."):
+                try:
+                    mon_res = build_monitor(get_client(), target_items, mon_catalog, _start, _end)
+                    st.session_state["mon_result"] = {"res": mon_res, "proc": sel_proc,
+                                                      "months": mon_months}
+                except Exception as e:
+                    st.error(f"\u274C 모니터링 실패: {e}")
+                    st.session_state.pop("mon_result", None)
+
+        if "mon_result" in st.session_state:
+            mr = st.session_state["mon_result"]
+            res = mr["res"]
+            rows = res["rows"]
+
+            if not rows:
+                st.warning("조회된 품목이 없습니다. 품목 키워드를 조정해야 할 수 있습니다.")
+            else:
+                # 요약 KPI — 상승/하락 품목 수
+                ups = sum(1 for r in rows if (r.get("yoy") or 0) > 0)
+                downs = sum(1 for r in rows if (r.get("yoy") or 0) < 0)
+                avg_yoy = pd.Series([r["yoy"] for r in rows if r.get("yoy") is not None]).mean()
+                latest_period = rows[0].get("period") or "-"
+
+                k1, k2, k3, k4 = st.columns(4)
+                k1.markdown(kpi_card("조회 품목", f"{len(rows)}개",
+                                     delta=mr["proc"], icon="\U0001F4E6"), unsafe_allow_html=True)
+                k2.markdown(kpi_card("전년비 상승", f"{ups}개",
+                                     delta="YoY > 0", delta_type="up", icon="\U0001F4C8"), unsafe_allow_html=True)
+                k3.markdown(kpi_card("전년비 하락", f"{downs}개",
+                                     delta="YoY < 0", delta_type="down", icon="\U0001F4C9"), unsafe_allow_html=True)
+                k4.markdown(kpi_card("평균 전년비",
+                                     f"{avg_yoy:+.2f}%" if pd.notna(avg_yoy) else "-",
+                                     delta=f"기준 {latest_period}", delta_type="neutral",
+                                     icon="\U0001F4CA", highlight=True), unsafe_allow_html=True)
+
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(section_title("품목별 현황"), unsafe_allow_html=True)
+
+                def _arrow(v):
+                    if v is None:
+                        return "-"
+                    if v > 1.0:
+                        return f"🔴 +{v:.2f}%"
+                    if v > 0:
+                        return f"🟠 +{v:.2f}%"
+                    if v < -1.0:
+                        return f"🔵 {v:.2f}%"
+                    if v < 0:
+                        return f"🟢 {v:.2f}%"
+                    return "⚪ 0.00%"
+
+                tbl = pd.DataFrame([{
+                    "품목": r["label"],
+                    "ECOS 품목명": r["ecos_name"],
+                    "코드": r["code"],
+                    "최신지수": round(r["latest"], 2) if r["latest"] is not None else None,
+                    "전월비": _arrow(r["mom"]),
+                    "전년동월비": _arrow(r["yoy"]),
+                    "기준시점": r["period"],
+                    "비고": r["note"],
+                } for r in rows])
+
+                st.dataframe(tbl, use_container_width=True, hide_index=True)
+                st.caption("🔴 +1%↑ · 🟠 상승 · ⚪ 보합 · 🟢 하락 · 🔵 -1%↓")
+
+                tbl_num = pd.DataFrame([{
+                    "품목": r["label"], "ECOS품목명": r["ecos_name"], "코드": r["code"],
+                    "최신지수": r["latest"], "전월비(%)": r["mom"],
+                    "전년동월비(%)": r["yoy"], "기준시점": r["period"], "비고": r["note"],
+                } for r in rows]).round(2)
+                csv = tbl_num.to_csv(index=False).encode("utf-8-sig")
+                st.download_button("\U0001F4E5 현황 CSV 다운로드", csv,
+                    f"품목모니터링_{latest_period}.csv", "text/csv",
+                    use_container_width=True, key="mon_csv")
+
+                # 추이 차트
+                st.markdown("<br>", unsafe_allow_html=True)
+                st.markdown(section_title("품목별 월별 추이"), unsafe_allow_html=True)
+
+                pick = st.multiselect(
+                    "차트에 표시할 품목 (최대 6개 권장)",
+                    [r["label"] for r in rows],
+                    default=[r["label"] for r in rows[:4]],
+                    key="mon_pick",
+                )
+                if pick:
+                    fig = go.Figure()
+                    palette = [POSCO_COLORS["primary"], POSCO_COLORS["accent"],
+                               POSCO_COLORS["danger"], "#10B981", "#8B5CF6", "#F59E0B",
+                               "#06B6D4", "#EC4899"]
+                    for i, r in enumerate([x for x in rows if x["label"] in pick]):
+                        df_s = res["series"].get(r["code"])
+                        if df_s is None or len(df_s) == 0:
+                            continue
+                        d = df_s.copy()
+                        d["TIME_DT"] = pd.to_datetime(d["TIME"].astype(str), format="%Y%m")
+                        fig.add_trace(go.Scatter(
+                            x=d["TIME_DT"], y=d["DATA_VALUE"], mode="lines",
+                            name=r["label"],
+                            line=dict(color=palette[i % len(palette)], width=2.2),
+                            hovertemplate="<b>%{x|%Y-%m}</b><br>" + r["label"] + ": %{y:.2f}<extra></extra>",
+                        ))
+                    fig.add_hline(y=100, line_dash="dash", line_color=POSCO_COLORS["neutral_500"],
+                                  annotation_text="2020 기준 (100)")
+                    fig.update_layout(
+                        title=f"{mr['proc']} 품목 지수 추이 (최근 {mr['months']}개월)",
+                        yaxis_title="지수 (2020=100)", height=520, hovermode="x unified",
+                        xaxis=dict(rangeslider=dict(visible=True, thickness=0.05)),
+                        legend=dict(orientation="h", y=1.02, x=0),
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                if res["unresolved"]:
+                    with st.expander(f"\u26A0\uFE0F 매칭되지 않은 품목 {len(res['unresolved'])}개"):
+                        st.write(", ".join(res["unresolved"]))
+                        st.caption(
+                            "ECOS 품목명과 키워드가 다를 수 있습니다. "
+                            "`data/steel_plant_items.py`의 keywords를 실제 품목명에 맞게 보완하세요. "
+                            "'설비별 PPI 조회' 탭에서 실제 품목명을 검색해 확인할 수 있습니다."
+                        )
+
+
+# ═══════════════════════════════════════════
+# Tab: 관심 품목 설정 (ECOS 카탈로그에서 공정별로 직접 선택)
+# ═══════════════════════════════════════════
+with tab_items:
+    st.markdown(section_title("관심 품목 설정 — 공정별"), unsafe_allow_html=True)
+    st.caption(
+        "ECOS 카탈로그에서 플랜트 설비 품목을 **공정별로 직접 골라** 저장합니다. "
+        "선택한 품목은 '품목 모니터링'과 월간 메일 리포트에 함께 반영됩니다."
+    )
+
+    _isel_cat = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+    if _isel_cat is None or len(_isel_cat) == 0:
+        st.error("ECOS 카탈로그 로드 실패 — 사이드바에서 인증키를 확인하세요.")
+    else:
+        # 세션에 없으면 커밋된 파일에서 읽고, 그것도 없으면 빈 선택으로 시작
+        if "item_selection" not in st.session_state:
+            try:
+                _loaded = ISEL.load_selection()
+            except Exception as e:
+                _loaded = None
+                st.warning(
+                    f"저장된 선택 파일을 읽지 못했습니다 ({e}). 빈 상태로 시작합니다. "
+                    "`data/selected_items.json` 형식을 확인하세요."
+                )
+            st.session_state["item_selection"] = _loaded or ISEL.empty_selection()
+
+        _sel = st.session_state["item_selection"]
+        _counts = ISEL.counts(_sel)
+        _total = ISEL.total_count(_sel)
+
+        # ── 현재 저장 상태 ──
+        if _total:
+            st.markdown(
+                "**현재 선택** · "
+                + " · ".join(f"{p} {n}개" for p, n in _counts.items())
+                + f" · **합계 {_total}개**"
+            )
+        else:
+            st.info(
+                "아직 선택된 품목이 없습니다. 아래에서 공정을 고르고 품목을 체크하세요. "
+                "기존 기본 목록으로 시작하려면 '기본 목록 불러오기'를 누르세요."
+            )
+
+        b1, b2 = st.columns([1, 3])
+        with b1:
+            if st.button("기본 목록 불러오기", use_container_width=True,
+                         help="steel_plant_items.py의 공정별 기본 목록을 카탈로그에 매칭해 채웁니다"):
+                _base = ISEL.from_default_items(_isel_cat, get_all_items_flat())
+                st.session_state["item_selection"] = _base
+                _n = ISEL.total_count(_base)
+                st.success(f"기본 목록에서 {_n}개를 불러왔습니다. 공정별로 확인·수정하세요.")
+                st.rerun()
+        with b2:
+            if _total and st.button("전체 선택 비우기", use_container_width=True):
+                st.session_state["item_selection"] = ISEL.empty_selection()
+                st.rerun()
+
+        st.divider()
+
+        # ── 공정 선택 ──
+        st.markdown("#### 1. 공정 선택")
+        _proc_list = list(dict.fromkeys(ISEL.DEFAULT_PROCESSES + list(_counts)))
+        pc1, pc2 = st.columns([2, 2])
+        with pc1:
+            _proc = st.selectbox(
+                "저장할 공정", _proc_list,
+                format_func=lambda p: f"{p}  ({_counts.get(p, 0)}개)",
+                key="isel_proc",
+            )
+        with pc2:
+            _new_proc = st.text_input(
+                "공정 직접 추가", value="", key="isel_newproc",
+                placeholder="예: 후판, 스테인리스",
+                help="목록에 없는 공정을 쓰려면 입력하세요. 입력하면 이 값이 우선합니다.",
+            )
+        _target_proc = (_new_proc or "").strip() or _proc
+
+        # ── 품목 필터 ──
+        st.markdown("#### 2. 품목 찾기")
+        fc1, fc2 = st.columns([3, 2])
+        with fc1:
+            _cats = st.multiselect(
+                "카테고리", list(ISEL.PLANT_CATEGORIES),
+                default=["기계·장비", "전기·전력설비"],
+                key="isel_cats",
+                help="ECOS 품목명에 들어간 단어로 거릅니다. 비우면 전체가 나옵니다.",
+            )
+        with fc2:
+            _q = st.text_input("이름 검색", value="", key="isel_q",
+                               placeholder="예: 변압기, 목적용")
+
+        _filtered = ISEL.filter_catalog(_isel_cat, _cats, _q)
+        _selected_codes = set(ISEL.codes_of(_sel, _target_proc))
+
+        # 이미 선택된 품목은 필터에서 빠져도 표에 남겨야 한다.
+        # 안 그러면 필터를 바꿔 저장할 때 기존 선택이 조용히 지워진다.
+        _extra = _isel_cat[
+            _isel_cat["ITEM_CODE"].astype(str).isin(_selected_codes)
+            & ~_isel_cat["ITEM_CODE"].astype(str).isin(_filtered["ITEM_CODE"].astype(str))
+        ] if len(_filtered) else _isel_cat[
+            _isel_cat["ITEM_CODE"].astype(str).isin(_selected_codes)
+        ]
+        _view = pd.concat([_extra, _filtered], ignore_index=True) if len(_extra) else _filtered
+
+        st.caption(
+            f"필터 결과 **{len(_filtered):,}개**"
+            + (f" (+ 이미 선택된 {len(_extra)}개 포함)" if len(_extra) else "")
+            + f" · 카탈로그 전체 {len(_isel_cat):,}개"
+        )
+
+        _CAP = 400
+        if len(_view) > _CAP:
+            st.warning(
+                f"표시 대상이 {len(_view):,}개입니다. 상위 {_CAP}개만 표시합니다 — "
+                "카테고리나 검색어로 범위를 좁혀주세요. "
+                "(범위를 좁혀도 이미 선택한 품목은 유지됩니다)"
+            )
+            _view = _view.head(_CAP)
+
+        if len(_view) == 0:
+            st.info("조건에 맞는 품목이 없습니다. 카테고리를 늘리거나 검색어를 지워보세요.")
+        else:
+            # ── 체크박스 표 ──
+            st.markdown(f"#### 3. `{_target_proc}` 에 넣을 품목 체크")
+            _note_of = {
+                it["code"]: it.get("note", "")
+                for it in ISEL.normalize(_sel)["processes"].get(_target_proc, [])
+            }
+            _grid = pd.DataFrame({
+                "선택": [str(c) in _selected_codes for c in _view["ITEM_CODE"]],
+                "품목명": _view["ITEM_NAME"].astype(str),
+                "코드": _view["ITEM_CODE"].astype(str),
+                "비고": [_note_of.get(str(c), "") for c in _view["ITEM_CODE"]],
+            })
+            _grid = _grid.sort_values(["선택", "품목명"], ascending=[False, True]).reset_index(drop=True)
+
+            _edited = st.data_editor(
+                _grid, use_container_width=True, hide_index=True, height=430,
+                key=f"isel_editor_{_target_proc}",
+                column_config={
+                    "선택": st.column_config.CheckboxColumn("선택", width="small"),
+                    "품목명": st.column_config.TextColumn("ECOS 품목명", disabled=True),
+                    "코드": st.column_config.TextColumn("코드", disabled=True, width="small"),
+                    "비고": st.column_config.TextColumn(
+                        "비고", help="이 공정에서 왜 보는지 (리포트에는 표시되지 않음)"),
+                },
+            )
+
+            _checked = _edited[_edited["선택"].fillna(False).astype(bool)]
+            st.caption(f"체크 **{len(_checked)}개** · 저장하면 `{_target_proc}` 의 기존 선택을 교체합니다")
+
+            sc1, sc2 = st.columns([1, 3])
+            with sc1:
+                if st.button(f"`{_target_proc}` 저장", type="primary", use_container_width=True):
+                    _items = [
+                        {"code": r["코드"], "name": r["품목명"], "note": r["비고"] or ""}
+                        for _, r in _checked.iterrows()
+                    ]
+                    st.session_state["item_selection"] = ISEL.set_process(
+                        _sel, _target_proc, _items)
+                    st.success(f"{_target_proc}: {len(_items)}개 저장했습니다.")
+                    st.rerun()
+
+        st.divider()
+
+        # ── 저장 상태 · 내보내기 ──
+        st.markdown("#### 4. 저장 · 반영")
+        st.warning(
+            "**이 선택은 지금 브라우저 세션에만 있습니다.** Streamlit Cloud는 파일을 "
+            "영구 보관하지 않고, 월간 메일은 GitHub Actions에서 따로 돌아갑니다.\n\n"
+            "→ 아래 JSON을 내려받아 레포의 `data/selected_items.json` 으로 커밋하세요. "
+            "그러면 앱과 월간 메일이 모두 이 파일을 읽습니다."
+        )
+
+        _sel_now = st.session_state["item_selection"]
+        if ISEL.total_count(_sel_now):
+            _rows_view = []
+            for _p, _its in ISEL.normalize(_sel_now)["processes"].items():
+                for _it in _its:
+                    _rows_view.append({"공정": _p, "품목명": _it["name"],
+                                       "코드": _it["code"], "비고": _it.get("note", "")})
+            st.dataframe(pd.DataFrame(_rows_view), use_container_width=True, hide_index=True)
+
+            d1, d2 = st.columns(2)
+            with d1:
+                st.download_button(
+                    "selected_items.json 내려받기",
+                    data=ISEL.dumps_selection(_sel_now).encode("utf-8"),
+                    file_name="selected_items.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
+            with d2:
+                st.download_button(
+                    "선택 목록 엑셀로 내려받기",
+                    data=to_excel_bytes({"관심품목": pd.DataFrame(_rows_view)}),
+                    file_name=f"관심품목_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+
+        _up = st.file_uploader("저장해 둔 selected_items.json 불러오기",
+                               type=["json"], key="isel_upload")
+        if _up is not None and st.button("불러온 파일로 교체", use_container_width=True):
+            try:
+                _raw = json.loads(_up.read().decode("utf-8"))
+                st.session_state["item_selection"] = ISEL.normalize(_raw)
+                st.success(f"{ISEL.total_count(st.session_state['item_selection'])}개를 불러왔습니다.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"불러오기 실패: {e}")
+
+
 # ═══════════════════════════════════════════
 # Tab 1: AI Agent 환산
 # ═══════════════════════════════════════════
 with tab_ai:
-    st.markdown(section_title("🤖 자연어 입력 → 자동 환산"), unsafe_allow_html=True)
+    st.markdown(section_title("자연어 입력 → 자동 환산"), unsafe_allow_html=True)
 
     examples = [
         "(직접 입력)",
@@ -328,17 +802,15 @@ with tab_ai:
     if run_clicked:
         if not user_query.strip():
             st.warning("요청 내용을 입력해 주세요.")
-        elif not use_demo and not os.getenv("ECOS_API_KEY"):
-            st.error("⚠️ LIVE 모드에서는 ECOS API Key가 필요합니다.")
         else:
             with st.spinner("🤖 AI Agent 분석 중..."):
                 try:
                     result = run_ppi_agent(
-                        user_query, use_demo=use_demo, llm_provider=llm_provider,
+                        user_query, use_demo=False, llm_provider=llm_provider,
                         override_code=(override_code.strip() or None),
                         gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
                     )
-                    # 🆕 세션에 결과 저장 — Gemini 버튼 눌러도 화면 유지
+                    # 결과를 세션에 저장 — Gemini 버튼 눌러도 화면 유지
                     st.session_state["tab1_result"] = result
                 except Exception as e:
                     err_str = str(e)
@@ -405,7 +877,7 @@ with tab_ai:
             st.markdown("<br>", unsafe_allow_html=True)
 
             # PPI 추이 차트 (rangeslider + fill)
-            st.markdown(section_title("📈 PPI 추이 분석"), unsafe_allow_html=True)
+            st.markdown(section_title("PPI 추이 분석"), unsafe_allow_html=True)
             try:
                 client = get_client()
                 df_full = client.get_ppi(
@@ -455,11 +927,11 @@ with tab_ai:
                 st.plotly_chart(fig, use_container_width=True)
 
                 # 보고서
-                st.markdown(section_title("📝 AI 분석 보고서"), unsafe_allow_html=True)
+                st.markdown(section_title("AI 분석 보고서"), unsafe_allow_html=True)
                 st.markdown(result["report"])
 
                 # 내보내기
-                st.markdown("##### 📤 내보내기")
+                st.markdown("##### 내보내기")
                 ex1, ex2, ex3 = st.columns(3)
                 with ex1:
                     pdf_bytes = generate_pdf_report(
@@ -475,7 +947,11 @@ with tab_ai:
                             "환산금액": f"{adj:,.1f} 억원",
                             "증감": f"{diff:+,.1f} 억원 ({(factor-1)*100:+.2f}%)",
                         },
-                        body_text=result["report"],
+                        body_text=result["report"] + (
+                            "\n\n---\n*본 환산 결과는 포스코 투자엔지니어링실 내부 투자비 추정·검토용입니다. "
+                            "「국가를 당사자로 하는 계약에 관한 법률」상 계약금액조정(물가변동) 산식과는 다르므로, "
+                            "공식 계약 근거 자료로 사용하지 마십시오.*"
+                        ),
                         table_df=df_full[["TIME", "DATA_VALUE"]].rename(
                             columns={"TIME": "시점", "DATA_VALUE": "PPI"}
                         ),
@@ -520,7 +996,7 @@ with tab_ai:
             # 🆕 상승 원인 분석 (Gemini)
             # ───────────────────────────────────────────
             st.markdown("---")
-            st.markdown("### 📰 상승 원인 분석 (AI)")
+            st.markdown("### 상승 원인 분석 (AI)")
             st.caption("Gemini가 PPI 추이와 거시경제 이벤트를 연결해 왜 움직였는지 해설합니다.")
 
             if st.button("🧠 Gemini로 원인 분석 실행", key="explain_btn", use_container_width=True):
@@ -578,19 +1054,326 @@ with tab_ai:
 
 
 # ═══════════════════════════════════════════
+# Tab: 📑 엑셀 일괄 보정 (견적서 → 자동제안 → 사람확인 → 승인 → 환산)
+# ═══════════════════════════════════════════
+with tab_batch:
+    st.markdown(section_title("견적 엑셀 일괄 물가보정"), unsafe_allow_html=True)
+    st.caption(
+        "투자비 견적 엑셀을 올리면 각 행의 품목명을 ECOS 품목으로 **자동 제안**하고, "
+        "사람이 확인·승인한 뒤 전체를 일괄 환산합니다."
+    )
+    st.warning(
+        "⚠️ **자동 매칭은 제안일 뿐 확정이 아닙니다.**\n\n"
+        "견적 품목명('냉각수 순환펌프 1식', 'BFP 3대')은 구체적이라 자동 매칭이 틀릴 수 있고, "
+        "틀린 매칭은 **에러 없이 조용히 틀린 금액**을 만들어 투자 품의서에 들어갈 위험이 있습니다.\n\n"
+        "→ 신뢰도가 🟢 높음이 아닌 행은 **직접 확인하고 '확인'에 체크해야** 실행됩니다."
+    )
+
+    _bat_cat = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+    if _bat_cat is None or len(_bat_cat) == 0:
+        st.error("ECOS 카탈로그 로드 실패 — 사이드바에서 인증키를 확인하세요.")
+    else:
+        # 드롭다운용 옵션: "코드 · 품목명" (사람이 다른 품목으로 갈아끼울 수 있게 전체 노출)
+        _bat_opts = [""] + [
+            f"{r.ITEM_CODE} · {r.ITEM_NAME}" for r in _bat_cat.itertuples()
+        ]
+
+        def _bat_label(code, name):
+            code, name = str(code or "").strip(), str(name or "").strip()
+            return f"{code} · {name}" if code else ""
+
+        def _bat_parse(label):
+            """'6114 · 펌프' → ('6114', '펌프')"""
+            s = str(label or "")
+            if " · " not in s:
+                return "", ""
+            code, name = s.split(" · ", 1)
+            return code.strip(), name.strip()
+
+        # ── 1) 업로드
+        st.markdown("#### 1. 견적 엑셀 업로드")
+        _bat_sample = to_excel_bytes({
+            "견적서": pd.DataFrame({
+                "품목명": ["냉각수 순환펌프 1식", "주변압기 154kV", "형강 H-300x300"],
+                "규격": ["150kW", "60MVA", "SS400"],
+                "투자비(원)": [1200000000, 2500000000, 180000000],
+            })
+        })
+        c_up, c_smp = st.columns([3, 1])
+        with c_up:
+            _bat_file = st.file_uploader(
+                "xlsx / xls / csv",
+                type=["xlsx", "xls", "csv"],
+                key="bat_file",
+                help="품목명 컬럼과 금액 컬럼이 있으면 됩니다. 헤더는 1행에 두세요.",
+            )
+        with c_smp:
+            st.download_button(
+                "📥 샘플 양식",
+                data=_bat_sample,
+                file_name="견적_샘플양식.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
+        if _bat_file is None:
+            st.info("견적 엑셀을 업로드하면 자동 매칭이 시작됩니다. 양식이 없으면 샘플을 내려받아 쓰세요.")
+        else:
+            try:
+                _bat_raw = read_table(_bat_file, _bat_file.name)
+            except Exception as e:
+                _bat_raw = None
+                st.error(f"파일을 읽을 수 없습니다: {e}")
+
+            if _bat_raw is not None and len(_bat_raw) > 0:
+                st.success(f"{len(_bat_raw):,}행 · {len(_bat_raw.columns)}컬럼 읽음")
+                with st.expander("📄 원본 미리보기 (상위 10행)"):
+                    st.dataframe(_bat_raw.head(10), use_container_width=True)
+
+                # ── 2) 컬럼 지정
+                st.markdown("#### 2. 컬럼 지정")
+                _g_item, _g_amt = guess_columns(_bat_raw)
+                _cols = list(_bat_raw.columns)
+                cc1, cc2 = st.columns(2)
+                with cc1:
+                    _bat_item_col = st.selectbox(
+                        "품목명 컬럼", _cols,
+                        index=_cols.index(_g_item) if _g_item in _cols else 0,
+                        key="bat_item_col",
+                    )
+                with cc2:
+                    _bat_amt_col = st.selectbox(
+                        "금액 컬럼", _cols,
+                        index=_cols.index(_g_amt) if _g_amt in _cols else 0,
+                        key="bat_amt_col",
+                    )
+                st.caption("자동 추정값입니다. 틀렸으면 바꿔주세요.")
+
+                if len(_bat_raw) > MAX_ROWS:
+                    st.error(
+                        f"행 수 {len(_bat_raw):,}건이 상한 {MAX_ROWS}건을 초과합니다. "
+                        "품목별로 개별 API 호출이 발생하므로 나눠서 처리하세요."
+                    )
+                elif st.button("🔎 자동 매칭 실행", type="primary", use_container_width=True):
+                    with st.spinner("ECOS 품목 자동 매칭 중..."):
+                        try:
+                            _rev = suggest_matches(
+                                _bat_raw, _bat_item_col, _bat_amt_col, _bat_cat
+                            )
+                            _rev["확정품목"] = [
+                                _bat_label(r["제안코드"], r["제안품목"])
+                                for _, r in _rev.iterrows()
+                            ]
+                            _rev["확인"] = _rev["신뢰도"] == CONF_HIGH
+                            st.session_state["bat_review"] = _rev
+                            st.session_state.pop("bat_result", None)
+                        except Exception as e:
+                            st.error(f"매칭 실패: {e}")
+
+                # ── 3) 검토 · 수정 · 확인
+                if "bat_review" in st.session_state:
+                    _rev = st.session_state["bat_review"]
+
+                    st.markdown("#### 3. 매칭 검토 · 수정")
+                    n_hi = int((_rev["신뢰도"] == CONF_HIGH).sum())
+                    n_mid = int((_rev["신뢰도"] == CONF_MEDIUM).sum())
+                    n_lo = int((_rev["신뢰도"] == CONF_LOW).sum())
+                    n_no = int((_rev["신뢰도"] == CONF_NONE).sum())
+                    k1, k2, k3, k4 = st.columns(4)
+                    for _c, _lbl, _v in [
+                        (k1, "🟢 높음", n_hi), (k2, "🟠 중간", n_mid),
+                        (k3, "🔴 낮음", n_lo), (k4, "⚪ 실패", n_no),
+                    ]:
+                        with _c:
+                            st.markdown(kpi_card(_lbl, f"{_v}건"), unsafe_allow_html=True)
+
+                    if n_lo or n_no or n_mid:
+                        st.info(
+                            "🟠🔴⚪ 행은 **판단근거**를 읽고 '확정품목'을 바로잡은 뒤 '확인'에 체크하세요. "
+                            "드롭다운에는 ECOS 전체 품목이 들어 있습니다."
+                        )
+
+                    _show = _rev.copy()
+                    _show["신뢰도"] = _show["신뢰도"].map(lambda v: CONF_ICON.get(v, v))
+                    _edited = st.data_editor(
+                        _show[["행", "견적품목명", "금액", "신뢰도", "확정품목", "확인", "판단근거", "금액오류"]],
+                        use_container_width=True,
+                        hide_index=True,
+                        key="bat_editor",
+                        column_config={
+                            "행": st.column_config.NumberColumn("엑셀행", disabled=True, width="small"),
+                            "견적품목명": st.column_config.TextColumn("견적 품목명", disabled=True),
+                            "금액": st.column_config.NumberColumn(
+                                "금액(원)", format="%.0f",
+                                help="'800억'처럼 단위가 붙은 값은 읽지 못합니다. 여기서 숫자로 고치세요.",
+                            ),
+                            "신뢰도": st.column_config.TextColumn("신뢰도", disabled=True, width="small"),
+                            "확정품목": st.column_config.SelectboxColumn(
+                                "확정 ECOS 품목", options=_bat_opts, required=False,
+                                help="자동 제안이 틀렸으면 여기서 다른 품목을 고르세요.",
+                            ),
+                            "확인": st.column_config.CheckboxColumn("확인", help="사람이 검토했음"),
+                            "판단근거": st.column_config.TextColumn("판단근거", disabled=True, width="large"),
+                            "금액오류": st.column_config.TextColumn("금액오류", disabled=True),
+                        },
+                    )
+
+                    # 편집 결과를 원본 스키마로 되돌림
+                    _rev2 = _rev.copy()
+                    _rev2["금액"] = _edited["금액"].values
+                    _rev2["확인"] = _edited["확인"].fillna(False).astype(bool).values
+                    _codes, _names = zip(*[_bat_parse(v) for v in _edited["확정품목"].values]) \
+                        if len(_edited) else ((), ())
+                    _rev2["제안코드"] = list(_codes)
+                    _rev2["제안품목"] = list(_names)
+                    st.session_state["bat_review"] = _rev2
+
+                    # ── 4) 시점 + 승인 게이트
+                    st.markdown("#### 4. 기준·목표 시점")
+                    _dflt_target = (datetime.now() - timedelta(days=60)).strftime("%Y%m")
+                    p1, p2 = st.columns(2)
+                    with p1:
+                        _bat_base = st.text_input("기준시점 (YYYYMM)", value="201901", key="bat_base")
+                    with p2:
+                        _bat_target = st.text_input("목표시점 (YYYYMM)", value=_dflt_target, key="bat_target")
+                    st.caption("환산액 = 원금 × (목표시점 지수 ÷ 기준시점 지수)")
+
+                    _blockers = approval_blockers(_rev2)
+                    if not re.fullmatch(r"\d{6}", str(_bat_base) or ""):
+                        _blockers.append("기준시점 형식이 YYYYMM이 아닙니다.")
+                    if not re.fullmatch(r"\d{6}", str(_bat_target) or ""):
+                        _blockers.append("목표시점 형식이 YYYYMM이 아닙니다.")
+
+                    st.markdown("#### 5. 승인 후 실행")
+                    if _blockers:
+                        st.error(
+                            "**아래를 해결해야 실행할 수 있습니다** — 확인되지 않은 매칭으로 "
+                            "금액을 만들지 않기 위한 안전장치입니다.\n\n"
+                            + "\n".join(f"- {b}" for b in _blockers)
+                        )
+                    else:
+                        st.success("✅ 전 행 검토 완료 — 실행 가능합니다.")
+
+                    if st.button(
+                        "🚀 승인 후 일괄 보정 실행",
+                        type="primary", use_container_width=True,
+                        disabled=bool(_blockers),
+                    ):
+                        _pb = st.progress(0.0, text="보정 준비 중...")
+
+                        def _cb(done, total, label):
+                            _pb.progress(done / max(total, 1), text=f"[{done}/{total}] {label}")
+
+                        try:
+                            _res = run_batch(
+                                _rev2, get_client(), str(_bat_base), str(_bat_target),
+                                progress_cb=_cb,
+                            )
+                            st.session_state["bat_result"] = _res
+                        except Exception as e:
+                            st.error(f"보정 실행 실패: {e}")
+                        finally:
+                            _pb.empty()
+
+                # ── 6) 결과
+                if "bat_result" in st.session_state:
+                    _res = st.session_state["bat_result"]
+                    _sm = summarize(_res)
+
+                    st.divider()
+                    st.markdown("#### 6. 보정 결과")
+
+                    # 화면은 억 단위로 읽기 쉽게, 원 단위 전체를 바로 아래 병기.
+                    # 억 표시는 반올림되므로 근거로 쓸 값은 원 단위 병기·엑셀을 봐야 한다.
+                    r1, r2, r3, r4 = st.columns(4)
+                    with r1:
+                        st.markdown(kpi_card(
+                            "원금 합계", fmt_eok(_sm["원금합계"]),
+                            unit=eok_unit(_sm["원금합계"]),
+                            sub=f"{_sm['원금합계']:,.0f}원",
+                        ), unsafe_allow_html=True)
+                    with r2:
+                        st.markdown(kpi_card(
+                            "환산 합계", fmt_eok(_sm["환산합계"]),
+                            unit=eok_unit(_sm["환산합계"]),
+                            sub=f"{_sm['환산합계']:,.0f}원",
+                            highlight=True,
+                        ), unsafe_allow_html=True)
+                    with r3:
+                        _d = _sm["증감률(%)"]
+                        st.markdown(kpi_card(
+                            "증감률", f"{_d:+.2f}" if _d is not None else "—",
+                            unit="%" if _d is not None else None,
+                            sub=f"증감 {_sm['증감액']:,.0f}원",
+                            delta_type="up" if (_d or 0) > 0 else "down",
+                        ), unsafe_allow_html=True)
+                    with r4:
+                        st.markdown(kpi_card(
+                            "환산 성공", f"{_sm['성공']}",
+                            unit=f"/ {_sm['건수']}건",
+                            sub=f"실패 {_sm['실패']}건 · 저신뢰 {_sm['저신뢰건수']}건",
+                        ), unsafe_allow_html=True)
+
+                    if _sm["실패"]:
+                        st.warning(
+                            f"⚠️ {_sm['실패']}건은 환산하지 못했습니다. **합계에서 제외**했으므로 "
+                            "총액이 견적 전체와 다릅니다. '오류' 열을 확인하세요."
+                        )
+
+                    # 금액은 천단위 구분, 지수·계수는 소수 자리를 고정해 자리를 맞춘다
+                    st.dataframe(
+                        _res, use_container_width=True, hide_index=True,
+                        column_config={
+                            "행": st.column_config.NumberColumn("엑셀행", width="small"),
+                            "원금": st.column_config.NumberColumn("원금(원)", format="localized"),
+                            "환산액": st.column_config.NumberColumn("환산액(원)", format="localized"),
+                            "증감액": st.column_config.NumberColumn("증감액(원)", format="localized"),
+                            "기준지수": st.column_config.NumberColumn("기준지수", format="%.2f"),
+                            "목표지수": st.column_config.NumberColumn("목표지수", format="%.2f"),
+                            "보정계수": st.column_config.NumberColumn("보정계수", format="%.4f"),
+                            "증감률(%)": st.column_config.NumberColumn("증감률(%)", format="%.2f"),
+                            "오류": st.column_config.TextColumn("오류", width="large"),
+                        },
+                    )
+
+                    _disc = (
+                        "본 결과는 내부 투자비 추정·검토용이며, 「국가계약법」상 계약금액조정(물가변동) "
+                        "산식과 다르므로 공식 계약 근거로 사용할 수 없습니다. "
+                        "품목 매칭은 자동 제안에 사람 확인을 거친 것으로, 매칭 적정성의 최종 책임은 검토자에게 있습니다."
+                    )
+                    st.caption(f"ℹ️ {_disc}")
+
+                    _sum_df = pd.DataFrame([
+                        {"항목": k, "값": v} for k, v in _sm.items()
+                    ])
+                    _meta_df = pd.DataFrame([
+                        {"항목": "기준시점", "값": st.session_state.get("bat_base", "")},
+                        {"항목": "목표시점", "값": st.session_state.get("bat_target", "")},
+                        {"항목": "데이터 출처", "값": "한국은행 ECOS 생산자물가지수 (404Y014, 2020=100)"},
+                        {"항목": "생성일시", "값": datetime.now().strftime("%Y-%m-%d %H:%M")},
+                        {"항목": "면책", "값": _disc},
+                    ])
+                    st.download_button(
+                        "📊 결과 엑셀 내려받기",
+                        data=to_excel_bytes({
+                            "보정결과": _res,
+                            "요약": _sum_df,
+                            "매칭검토": st.session_state["bat_review"].drop(columns=["후보"], errors="ignore"),
+                            "산출근거": _meta_df,
+                        }),
+                        file_name=f"투자비_일괄보정_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
+
+
+# ═══════════════════════════════════════════
 # Tab 2: 설비별 PPI 조회
 # ═══════════════════════════════════════════
 with tab_ppi:
-    st.markdown(section_title("🔍 ECOS 실제 품목 단일 조회"), unsafe_allow_html=True)
+    st.markdown(section_title("ECOS 품목 단일 조회"), unsafe_allow_html=True)
 
-    if use_demo:
-        st.info("📦 DEMO 모드 — 가상 데이터 조회")
-        active_code = "DEMO"
-        active_name = "데모 품목"
-    elif not os.getenv("ECOS_API_KEY"):
-        st.warning("⚠️ ECOS API Key가 필요합니다.")
-        st.stop()
-    else:
+    if True:
         mode = st.radio(
             "입력 방식",
             ["📂 카테고리 필터", "🔍 이름 검색", "⌨️ 코드 직접 입력"],
@@ -720,18 +1503,197 @@ with tab_ppi:
 
 
 # ═══════════════════════════════════════════
+# Tab: 🏗️ 공사비 물가보정 (KOSIS 건설공사비지수)
+# ═══════════════════════════════════════════
+with tab_cci:
+    st.markdown(section_title("공사비 물가보정 (건설공사비지수)"), unsafe_allow_html=True)
+    st.caption(
+        "한국건설기술연구원 건설공사비지수(KOSIS, 2020=100)로 과거 공사비를 현재가치로 환산합니다. "
+        "본 기능은 **내부 투자비 추정·검토용**이며, 「국가계약법」상 계약금액조정 산식과는 다릅니다."
+    )
+
+    _kosis_key = os.getenv("KOSIS_API_KEY", "").strip()
+    if not _kosis_key:
+        st.info(
+            "\U0001F50C **KOSIS 인증키가 설정되지 않았습니다.**\n\n"
+            "왼쪽 사이드바에 KOSIS API Key를 입력하거나 secrets에 `KOSIS_API_KEY`를 등록하면 "
+            "공사비 물가보정이 활성화됩니다.\n\n"
+            "\u2192 무료 발급: https://kosis.kr \ubcf5\ud569\uc11c\ube44\uc2a4(OpenAPI)"
+        )
+    else:
+        # 공종 카탈로그 자동 발견
+        with st.spinner("KOSIS 공종 분류를 불러오는 중..."):
+            try:
+                cci_catalog = get_construction_catalog(api_key=_kosis_key)
+            except Exception as e:
+                cci_catalog = None
+                st.error(f"공종 카탈로그 로드 실패: {e}")
+
+        cci_options = catalog_to_options(cci_catalog) if cci_catalog is not None else []
+
+        if not cci_options:
+            st.warning(
+                "공종 분류를 불러오지 못했습니다. 키가 올바른지, 통계표 코드(DT_39701_A003)가 "
+                "유효한지 확인하세요. 아래에서 공종코드(objL1)를 직접 입력할 수도 있습니다."
+            )
+
+        # 공종 선택 (자동 발견 목록 + 직접 입력 폴백)
+        col_sel, col_code = st.columns([2, 1])
+        with col_sel:
+            if cci_options:
+                labels = [f"{o['name']} [{o['code']}]" for o in cci_options]
+                sel_label = st.selectbox(f"\U0001F3D7\uFE0F 공종 선택 ({len(cci_options)}개)", labels, key="cci_sel")
+                sidx = labels.index(sel_label)
+                cci_code = cci_options[sidx]["code"]
+                cci_name = cci_options[sidx]["name"]
+            else:
+                cci_code, cci_name = None, None
+        with col_code:
+            override_cci = st.text_input("\u2699\uFE0F 공종코드 직접 입력", "",
+                                         help="objL1 코드. 비우면 위 선택값 사용", key="cci_override")
+            if override_cci.strip():
+                cci_code = override_cci.strip()
+                cci_name = f"공종 {cci_code}"
+
+        if cci_code:
+            st.caption(f"\U0001F4CC **{cci_name}** \u00b7 공종코드 `{cci_code}`")
+
+        # 입력
+        i1, i2, i3 = st.columns(3)
+        cci_cost = i1.number_input("\U0001F4B0 공사 원금 (억원)", 0.0, 1_000_000.0, 500.0, step=10.0, key="cci_cost")
+        cci_base = i2.text_input("기준 시점 (YYYYMM)", "202001", key="cci_base")
+        # 건설공사비지수는 발표가 1~2개월 지연 → 기본 목표를 2개월 전으로
+        _cci_default_target = (datetime.now().replace(day=1) - pd.Timedelta(days=60)).strftime("%Y%m")
+        cci_target = i3.text_input("목표 시점 (YYYYMM)", _cci_default_target, key="cci_target",
+                                   help="건설공사비지수는 발표가 1~2개월 늦습니다. 최근 발표월로 설정하세요.")
+
+        if st.button("\U0001F3D7\uFE0F 공사비 환산 실행", type="primary", use_container_width=True, key="cci_run"):
+            if not cci_code:
+                st.warning("공종을 선택하거나 코드를 입력하세요.")
+            else:
+                try:
+                    client = KOSISClient(api_key=_kosis_key)
+                    base_idx = client.get_ppi_at(cci_code, cci_base)
+                    target_idx = client.get_ppi_at(cci_code, cci_target)
+                    factor = target_idx / base_idx
+                    adjusted = cci_cost * factor
+                    st.session_state["cci_result"] = {
+                        "code": cci_code, "name": cci_name, "cost": cci_cost,
+                        "base": cci_base, "target": cci_target,
+                        "base_idx": base_idx, "target_idx": target_idx,
+                        "factor": factor, "adjusted": adjusted, "diff": adjusted - cci_cost,
+                    }
+                except Exception as e:
+                    st.error(f"\u274C 환산 실패: {e}")
+                    st.session_state.pop("cci_result", None)
+
+        if "cci_result" in st.session_state:
+            res = st.session_state["cci_result"]
+            st.markdown("<br>", unsafe_allow_html=True)
+            c1, c2, c3, c4 = st.columns(4)
+            c1.markdown(kpi_card("원금", f"{res['cost']:,.0f} 억", delta=res["base"], icon="\U0001F4B0"), unsafe_allow_html=True)
+            c2.markdown(kpi_card("보정계수", f"{res['factor']:.4f}",
+                                 delta=f"{(res['factor']-1)*100:+.2f}%",
+                                 delta_type="up" if res["factor"] > 1 else "down", icon="\u2696\uFE0F"), unsafe_allow_html=True)
+            c3.markdown(kpi_card("증감액", f"{res['diff']:+,.1f} 억", delta="현재가 기준",
+                                 delta_type="up" if res["diff"] > 0 else "down", icon="\U0001F4CA"), unsafe_allow_html=True)
+            c4.markdown(kpi_card("환산 공사비", f"{res['adjusted']:,.1f} 억", delta=res["target"],
+                                 delta_type="neutral", icon="\U0001F3AF", highlight=True), unsafe_allow_html=True)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(section_title("건설공사비지수 추이"), unsafe_allow_html=True)
+            try:
+                client = KOSISClient(api_key=_kosis_key)
+                df_full = client.get_ppi(res["code"], "201501", res["target"])
+                df_full["TIME_DT"] = pd.to_datetime(df_full["TIME"], format="%Y%m")
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=df_full["TIME_DT"], y=df_full["DATA_VALUE"], mode="lines",
+                    name="건설공사비지수", line=dict(color=POSCO_COLORS["accent"], width=2.5),
+                    fill="tozeroy", fillcolor="rgba(242,159,5,0.08)",
+                    hovertemplate="<b>%{x|%Y년 %m월}</b><br>지수: %{y:.2f}<extra></extra>",
+                ))
+                def _mark_cci(period, label, color):
+                    try:
+                        t = pd.to_datetime(period, format="%Y%m")
+                        v = df_full[df_full["TIME"] == period]["DATA_VALUE"]
+                        if len(v) > 0:
+                            fig.add_trace(go.Scatter(
+                                x=[t], y=[float(v.iloc[0])], mode="markers+text",
+                                marker=dict(size=14, color=color, line=dict(color="white", width=2)),
+                                text=[label], textposition="top center",
+                                textfont=dict(size=11, color=color), showlegend=False))
+                    except Exception:
+                        pass
+                _mark_cci(res["base"], "\U0001F4CD 기준", POSCO_COLORS["primary"])
+                _mark_cci(res["target"], "\U0001F3AF 목표", POSCO_COLORS["danger"])
+                fig.add_hline(y=100, line_dash="dash", line_color=POSCO_COLORS["neutral_500"],
+                              annotation_text="2020 기준 (100)")
+                fig.update_layout(
+                    title=f"{res['name']} 건설공사비지수 시계열",
+                    xaxis=dict(rangeslider=dict(visible=True, thickness=0.05)),
+                    yaxis_title="지수 (2020=100)", height=480, hovermode="x unified")
+                st.plotly_chart(fig, use_container_width=True)
+
+                st.markdown(
+                    f"| 항목 | 값 |\n|---|---|\n"
+                    f"| 공종 | {res['name']} (`{res['code']}`) |\n"
+                    f"| 기준 {res['base']} 지수 | {res['base_idx']:.2f} |\n"
+                    f"| 목표 {res['target']} 지수 | {res['target_idx']:.2f} |\n"
+                    f"| 보정계수 | {res['factor']:.4f} |\n"
+                    f"| 원금 | {res['cost']:,.1f} 억원 |\n"
+                    f"| **환산 공사비** | **{res['adjusted']:,.1f} 억원** ({(res['factor']-1)*100:+.2f}%) |"
+                )
+
+                st.markdown("##### 내보내기")
+                ex1, ex2 = st.columns(2)
+                with ex1:
+                    pdf_bytes = generate_pdf_report(
+                        title=f"공사비 물가보정 리포트 \u2014 {res['name']}",
+                        summary={
+                            "공종": res["name"], "기준 시점": res["base"], "목표 시점": res["target"],
+                            "기준 지수": f"{res['base_idx']:.2f}", "목표 지수": f"{res['target_idx']:.2f}",
+                            "보정계수": f"{res['factor']:.4f}", "원금": f"{res['cost']:,.1f} 억원",
+                            "환산 공사비": f"{res['adjusted']:,.1f} 억원",
+                            "증감": f"{res['diff']:+,.1f} 억원 ({(res['factor']-1)*100:+.2f}%)",
+                        },
+                        body_text=(
+                            f"{res['base']} 기준 {res['cost']:,.1f}억원의 {res['name']} 공사비를 "
+                            f"{res['target']} 현재가치로 환산한 결과입니다. 건설공사비지수가 "
+                            f"{res['base_idx']:.2f}에서 {res['target_idx']:.2f}로 변동하여 보정계수 "
+                            f"{res['factor']:.4f}가 적용되었으며, 환산 공사비는 {res['adjusted']:,.1f}억원입니다."
+                            "\n\n---\n*본 환산 결과는 포스코 투자엔지니어링실 내부 투자비 추정·검토용입니다. "
+                            "「국가를 당사자로 하는 계약에 관한 법률」상 계약금액조정(물가변동) 산식과는 다르므로, "
+                            "공식 계약 근거 자료로 사용하지 마십시오.*"
+                        ),
+                        table_df=df_full[["TIME", "DATA_VALUE"]].rename(columns={"TIME": "시점", "DATA_VALUE": "지수"}),
+                    )
+                    st.download_button("\U0001F4C4 PDF 다운로드", pdf_bytes,
+                        f"공사비보정_{res['base']}_{res['target']}.pdf",
+                        "application/pdf", use_container_width=True, key="cci_pdf")
+                with ex2:
+                    xlsx = to_excel_bytes({
+                        "요약": pd.DataFrame([{"항목": k, "값": v} for k, v in {
+                            "공종": res["name"], "원금(억)": res["cost"], "환산공사비(억)": res["adjusted"],
+                            "보정계수": res["factor"], "기준시점": res["base"], "목표시점": res["target"],
+                        }.items()]),
+                        "건설공사비지수": df_full[["TIME", "DATA_VALUE"]],
+                    })
+                    st.download_button("\U0001F4CA Excel 다운로드", xlsx,
+                        f"공사비보정_{res['base']}_{res['target']}.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True, key="cci_xlsx")
+            except Exception as e:
+                st.warning(f"차트 생성 실패: {e}")
+
+
+# ═══════════════════════════════════════════
 # Tab 3: 다중 설비 비교
 # ═══════════════════════════════════════════
 with tab_multi:
-    st.markdown(section_title("📊 여러 설비 PPI 동시 비교"), unsafe_allow_html=True)
+    st.markdown(section_title("여러 설비 PPI 동시 비교"), unsafe_allow_html=True)
 
-    if use_demo:
-        st.warning("DEMO 모드에서는 제한. LIVE로 전환하세요.")
-        selected_rows = []
-    elif not os.getenv("ECOS_API_KEY"):
-        st.warning("ECOS Key 필요")
-        selected_rows = []
-    else:
+    if True:
         catalog = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
         if catalog is None or len(catalog) == 0:
             st.error("카탈로그 로드 실패")
@@ -895,7 +1857,7 @@ with tab_multi:
     # ───────────────────────────────────────────
     if "multi_items_info" in st.session_state and st.session_state["multi_items_info"]:
         st.markdown("---")
-        st.markdown("### 📰 AI 비교 분석")
+        st.markdown("### AI 비교 분석")
         st.caption("Gemini가 품목별로 왜 다르게 움직였는지 거시·산업 맥락으로 해설합니다.")
 
         if st.button("🧠 Gemini로 비교 분석 실행", key="multi_explain_btn", use_container_width=True):
@@ -943,7 +1905,7 @@ with tab_multi:
 # Tab 4: 시나리오 분석 (What-if)
 # ═══════════════════════════════════════════
 with tab_scn:
-    st.markdown(section_title("🧪 What-if 시나리오 분석"), unsafe_allow_html=True)
+    st.markdown(section_title("What-if 시나리오 분석"), unsafe_allow_html=True)
     st.caption("원금·보정계수·외부 충격 변동 시 환산금액 변화를 실시간 시뮬레이션")
 
     s1, s2, s3 = st.columns(3)
@@ -951,7 +1913,7 @@ with tab_scn:
     base_factor = s2.number_input("⚖️ 기준 보정계수", 0.1, 5.0, 1.23, step=0.01, format="%.4f")
     base_label = s3.text_input("🏷️ 시나리오 이름", "2020년 펌프 800억")
 
-    st.markdown("##### 🎛️ What-if 변수")
+    st.markdown("##### What-if 변수")
     v1, v2, v3 = st.columns(3)
     cost_shock = v1.slider("원금 변동 (%)", -50, 50, 0, help="자재비/인건비 변동 가정")
     ppi_shock = v2.slider("PPI 추가 변동 (%)", -30, 30, 0, help="원자재 급등/급락 시뮬")
@@ -985,7 +1947,7 @@ with tab_scn:
 
     # 토네이도 차트 (민감도 분석)
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(section_title("🌪️ 민감도 토네이도 분석"), unsafe_allow_html=True)
+    st.markdown(section_title("민감도 토네이도 분석"), unsafe_allow_html=True)
     st.caption("각 변수 ±10% 변동 시 환산금액 영향 크기")
 
     tornado_data = []
@@ -1050,7 +2012,7 @@ with tab_scn:
 # Tab 5: 포트폴리오 환산기
 # ═══════════════════════════════════════════
 with tab_port:
-    st.markdown(section_title("📦 설비 구성비 기반 포트폴리오 환산"), unsafe_allow_html=True)
+    st.markdown(section_title("설비 구성비 기반 포트폴리오 환산"), unsafe_allow_html=True)
     st.caption("한 프로젝트의 여러 설비(기계/전기/토건)를 가중평균으로 통합 환산")
 
     p1, p2 = st.columns([1, 1])
@@ -1058,7 +2020,7 @@ with tab_port:
     base_period = p2.text_input("기준 시점", "202001")
     target_period = st.text_input("목표 시점", "202601")
 
-    st.markdown("##### 🧩 설비 구성")
+    st.markdown("##### 설비 구성")
     st.caption("각 설비 구성비를 입력하세요 (합계 100%)")
 
     # 기본 포트폴리오 예시
@@ -1070,7 +2032,7 @@ with tab_port:
     ])
 
     # 사용자가 카탈로그에서 골라 채우도록 지원
-    if not use_demo and os.getenv("ECOS_API_KEY"):
+    if os.getenv("ECOS_API_KEY"):
         catalog_all = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
         if catalog_all is not None and len(catalog_all) > 0:
             with st.expander("➕ ECOS 카탈로그에서 빠르게 추가"):
@@ -1119,12 +2081,10 @@ with tab_port:
         st.success(f"✅ 비중 합계: {total_pct:.1f}%")
 
     if st.button("🚀 포트폴리오 환산 실행", type="primary", key="port_btn"):
-        if not use_demo and not os.getenv("ECOS_API_KEY"):
-            st.error("LIVE 모드에서는 ECOS Key 필요")
-        else:
+        if True:
             try:
                 client = get_client()
-                catalog_p = get_catalog(api_key=os.getenv("ECOS_API_KEY")) if not use_demo else None
+                catalog_p = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
 
                 results = []
                 for _, row in portfolio_df.iterrows():
@@ -1272,7 +2232,7 @@ with tab_port:
 # Tab 6: 히트맵 & 상관관계 (v10 강화팩)
 # ═══════════════════════════════════════════
 with tab_heat:
-    st.markdown(section_title("🗺️ 원가 인텔리전스 히트맵"), unsafe_allow_html=True)
+    st.markdown(section_title("원가 인텔리전스 히트맵"), unsafe_allow_html=True)
     st.caption("다중 뷰 · 정렬 · 드릴다운 · 자동 인사이트 · AI 자연어 질의 · 자동 리포트")
 
     if "multi_series" not in st.session_state or not st.session_state["multi_series"]:
@@ -1321,7 +2281,7 @@ with tab_heat:
         yearly["Z-score"] = yearly.groupby("품목")["YoY(%)"].transform(_zscore)
 
         # ─── 3) Tier 1-① 다중 뷰 토글
-        st.markdown("#### 🎛️ 뷰 & 필터")
+        st.markdown("#### 뷰 & 필터")
         vc1, vc2, vc3, vc4 = st.columns([1.2, 1.2, 1.2, 1.4])
         with vc1:
             view_mode = st.radio(
@@ -1425,7 +2385,7 @@ with tab_heat:
 
         # ─── 9) Tier 3-⑨ 자동 인사이트 Top 5
         st.markdown("---")
-        st.markdown("#### 💡 자동 인사이트 Top 5")
+        st.markdown("#### 자동 인사이트 Top 5")
 
         yoy_pivot = yearly.pivot(index="품목", columns="YEAR", values="YoY(%)").dropna(how="all", axis=1)
 
@@ -1468,7 +2428,7 @@ with tab_heat:
 
         # ─── 10) Tier 1-③ 셀 드릴다운 + Gemini 원인 분석
         st.markdown("---")
-        st.markdown("#### 🔍 셀 드릴다운 — 특정 품목·연도 심층 분석")
+        st.markdown("#### 셀 드릴다운 — 특정 품목·연도 심층 분석")
 
         dc1, dc2, dc3 = st.columns([1.3, 1, 1])
         with dc1:
@@ -1546,7 +2506,7 @@ with tab_heat:
 
         # ─── 11) #14 AI 자연어 질의 박스
         st.markdown("---")
-        st.markdown("#### 🗣️ AI에게 데이터 질문하기")
+        st.markdown("#### AI에게 데이터 질문하기")
         st.caption("예: \"2020년 이후 변동성이 가장 낮은 품목 5개는?\" · \"2022년에 가장 많이 오른 품목 3개 이유는?\"")
 
         # 예시 질문 버튼
@@ -1604,7 +2564,7 @@ with tab_heat:
 
         # ─── 12) Tier 3-⑪ 자동 리포트 생성 버튼
         st.markdown("---")
-        st.markdown("#### 📄 임원 보고용 자동 리포트")
+        st.markdown("#### 임원 보고용 자동 리포트")
         rc1, rc2 = st.columns(2)
         with rc1:
             if st.button("🧾 Gemini 요약 리포트 생성", key="heat_report_btn", use_container_width=True):
@@ -1656,7 +2616,7 @@ with tab_heat:
 
         # ─── 13) Tier 3-⑫ 시간 애니메이션 Playback (월별)
         st.markdown("---")
-        st.markdown("#### 🎬 시간 Playback — 월별 rolling 12M YoY")
+        st.markdown("#### 시간 Playback — 월별 rolling 12M YoY")
         st.caption("재생 버튼을 눌러 12개월 YoY의 월별 변화를 애니메이션으로 확인합니다.")
 
         try:
@@ -1696,7 +2656,7 @@ with tab_heat:
 
         # ─── 14) 상관계수 매트릭스 (기존 유지)
         st.markdown("---")
-        st.markdown(section_title("🔗 품목 간 가격 동조 상관계수"), unsafe_allow_html=True)
+        st.markdown(section_title("품목 간 가격 동조 상관계수"), unsafe_allow_html=True)
         fig_c = px.imshow(
             corr, color_continuous_scale="RdBu_r",
             zmin=-1, zmax=1, text_auto=".2f",
@@ -1710,18 +2670,254 @@ with tab_heat:
         )
 
 
+
+# =========================================================
+# Tab: \U0001F52E 물가 예측 (과거 추세 기반)
+# =========================================================
+with tab_fcst:
+    st.markdown(section_title("물가지수 예측 (과거 추세 기반)"), unsafe_allow_html=True)
+    st.warning(
+        "\u26A0\uFE0F **예측값은 과거 추세의 연장일 뿐, 확정값이 아닙니다.** "
+        "원자재 급등·정책 변화 등 외부 충격은 반영되지 않습니다. "
+        "미래 투자 계획의 **참고 지표**로만 활용하세요."
+    )
+
+    src = st.radio(
+        "예측 대상",
+        ["\U0001F3ED 설비비 (ECOS PPI)", "\U0001F3D7\uFE0F 공사비 (KOSIS 건설공사비지수)"],
+        horizontal=True, key="fcst_src",
+    )
+    is_ecos = src.startswith("\U0001F3ED")
+
+    fcst_code, fcst_name = None, None
+    if is_ecos:
+        catalog_f = get_catalog(api_key=os.getenv("ECOS_API_KEY"))
+        if catalog_f is None or len(catalog_f) == 0:
+            st.error("ECOS 카탈로그 로드 실패")
+        else:
+            kw = st.text_input("품목 검색", placeholder="예: 변압기, 펌프, 형강", key="fcst_kw")
+            if kw.strip():
+                m = catalog_f[catalog_f["ITEM_NAME"].astype(str).str.contains(kw.strip(), na=False)]
+                if len(m) > 0:
+                    opts = m.apply(lambda r: f"{r['ITEM_NAME']} [{r['ITEM_CODE']}]", axis=1).tolist()
+                    sel = st.selectbox(f"품목 ({len(m)}개)", opts, key="fcst_ecos_sel")
+                    idx = opts.index(sel)
+                    fcst_code = str(m.iloc[idx]["ITEM_CODE"])
+                    fcst_name = str(m.iloc[idx]["ITEM_NAME"])
+                else:
+                    st.warning("매칭 품목 없음")
+    else:
+        _kk = os.getenv("KOSIS_API_KEY", "").strip()
+        if not _kk:
+            st.info("공사비 예측을 쓰려면 사이드바에 KOSIS 키가 필요합니다.")
+        else:
+            cat_f = get_construction_catalog(api_key=_kk)
+            opts_c = catalog_to_options(cat_f)
+            if opts_c:
+                labels = [f"{o['name']} [{o['code']}]" for o in opts_c]
+                sel = st.selectbox(f"공종 ({len(opts_c)}개)", labels, key="fcst_cci_sel")
+                i = labels.index(sel)
+                fcst_code = opts_c[i]["code"]; fcst_name = opts_c[i]["name"]
+
+    c1, c2 = st.columns(2)
+    horizon = c1.slider("예측 기간 (개월)", 1, MAX_HORIZON, 12, key="fcst_h")
+    use_seasonal = c2.checkbox("계절성 반영 (24개월 이상 데이터 권장)", value=True, key="fcst_seasonal")
+
+    if st.button("\U0001F52E 예측 실행", type="primary", use_container_width=True, key="fcst_run"):
+        if not fcst_code:
+            st.warning("예측할 품목/공종을 선택하세요.")
+        else:
+            try:
+                client_f = get_client() if is_ecos else KOSISClient(api_key=os.getenv("KOSIS_API_KEY"))
+                hist_df = client_f.get_ppi(fcst_code, "201501", datetime.now().strftime("%Y%m"))
+                if len(hist_df) < 6:
+                    st.error("예측에 필요한 과거 데이터가 부족합니다(최소 6개월).")
+                else:
+                    res_f = forecast_index(hist_df, horizon=horizon, seasonal=use_seasonal)
+                    st.session_state["fcst_result"] = {
+                        "name": fcst_name, "code": fcst_code, "is_ecos": is_ecos, "res": res_f,
+                    }
+            except Exception as e:
+                st.error(f"\u274C 예측 실패: {e}")
+                st.session_state.pop("fcst_result", None)
+
+    if "fcst_result" in st.session_state:
+        fr = st.session_state["fcst_result"]
+        resf = fr["res"]
+        hist, fc, lo, hi = resf["history"], resf["forecast"], resf["lower"], resf["upper"]
+
+        st.caption(f"\U0001F4D0 방법: {resf['method']}")
+
+        last_v = float(hist.iloc[-1]); end_v = float(fc.iloc[-1])
+        chg = (end_v / last_v - 1) * 100
+        k1, k2, k3 = st.columns(3)
+        k1.markdown(kpi_card("현재 지수", f"{last_v:.2f}",
+                             delta=hist.index[-1].strftime("%Y-%m"), icon="\U0001F4CD"), unsafe_allow_html=True)
+        k2.markdown(kpi_card(f"{len(fc)}개월 후 예측", f"{end_v:.2f}",
+                             delta=f"{chg:+.2f}%", delta_type="up" if chg > 0 else "down",
+                             icon="\U0001F52E", highlight=True), unsafe_allow_html=True)
+        k3.markdown(kpi_card("예측 범위", f"{float(lo.iloc[-1]):.1f}~{float(hi.iloc[-1]):.1f}",
+                             delta="95% 신뢰구간", delta_type="neutral", icon="\U0001F4CA"), unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=list(hi.index) + list(lo.index[::-1]),
+            y=list(hi.values) + list(lo.values[::-1]),
+            fill="toself", fillcolor="rgba(0,94,184,0.12)",
+            line=dict(color="rgba(0,0,0,0)"), name="95% 신뢰구간", hoverinfo="skip",
+        ))
+        fig.add_trace(go.Scatter(
+            x=hist.index, y=hist.values, mode="lines", name="과거 실측",
+            line=dict(color=POSCO_COLORS["primary"], width=2.5),
+            hovertemplate="<b>%{x|%Y-%m}</b><br>실측: %{y:.2f}<extra></extra>",
+        ))
+        fc_x = [hist.index[-1]] + list(fc.index)
+        fc_y = [float(hist.iloc[-1])] + list(fc.values)
+        fig.add_trace(go.Scatter(
+            x=fc_x, y=fc_y, mode="lines+markers", name="예측",
+            line=dict(color=POSCO_COLORS["danger"], width=2.5, dash="dash"),
+            marker=dict(size=5),
+            hovertemplate="<b>%{x|%Y-%m}</b><br>예측: %{y:.2f}<extra></extra>",
+        ))
+        fig.update_layout(
+            title=f"{fr['name']} 지수 예측 ({len(fc)}개월)",
+            yaxis_title="지수 (2020=100)", height=500, hovermode="x unified",
+            legend=dict(orientation="h", y=1.02, x=0),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        with st.expander("\U0001F4CB 예측값 상세"):
+            tblf = pd.DataFrame({
+                "시점": [d.strftime("%Y-%m") for d in fc.index],
+                "예측 지수": fc.round(2).values,
+                "하한(95%)": lo.round(2).values,
+                "상한(95%)": hi.round(2).values,
+            })
+            st.dataframe(tblf, use_container_width=True, hide_index=True)
+            csvf = tblf.to_csv(index=False).encode("utf-8-sig")
+            st.download_button("\U0001F4E5 예측 CSV", csvf,
+                f"예측_{fr['name']}_{len(fc)}개월.csv", "text/csv",
+                use_container_width=True, key="fcst_csv")
+
+        st.caption("\u26A0\uFE0F " + resf["warning"])
+
+        # \u2500\u2500 \uBC31\uD14C\uC2A4\uD2B8: \uC774 \uC608\uCE21\uC774 \uACFC\uAC70\uC5D0 \uC5BC\uB9C8\uB098 \uB9DE\uC558\uB098 \u2500\u2500
+        st.divider()
+        st.markdown(section_title("\uC774 \uC608\uCE21\uC774 \uACFC\uAC70\uC5D0 \uB9DE\uC558\uB294\uAC00 (\uBC31\uD14C\uC2A4\uD2B8)"), unsafe_allow_html=True)
+        st.caption(
+            "\uC2DC\uC810\uC744 \uB4A4\uB85C \uC62E\uAE30\uBA70 '\uD559\uC2B5 \u2192 \uC608\uCE21 \u2192 \uC2E4\uCE21 \uBE44\uAD50'\uB97C \uBC18\uBCF5\uD569\uB2C8\uB2E4(\uC804\uC9C4 \uAC80\uC99D). "
+            "**naive(\uB9C8\uC9C0\uB9C9 \uAC12 \uADF8\uB300\uB85C \uC720\uC9C0)** \uB97C \uC774\uAE30\uC9C0 \uBABB\uD558\uBA74 \uC608\uCE21\uC774 \uAC12\uC744 \uB354\uD558\uC9C0 \uBABB\uD55C\uB2E4\uB294 \uB73B\uC774\uBBC0\uB85C, "
+            "\uADF8 \uACBD\uC6B0 \uCD5C\uC2E0 \uC2E4\uCE21\uCE58\uB97C \uADF8\uB300\uB85C \uC4F0\uB294 \uD3B8\uC774 \uB0AB\uC2B5\uB2C8\uB2E4."
+        )
+
+        bt_folds = st.slider("\uAC80\uC99D \uD69F\uC218", 2, 10, 6, key="bt_folds",
+                             help="\uB9CE\uC744\uC218\uB85D \uC2E0\uB8B0\uB3C4\uAC00 \uB192\uC9C0\uB9CC \uACFC\uAC70 \uB370\uC774\uD130\uAC00 \uB354 \uD544\uC694\uD569\uB2C8\uB2E4.")
+
+        if st.button("\uBC31\uD14C\uC2A4\uD2B8 \uC2E4\uD589", use_container_width=True, key="bt_run"):
+            with st.spinner("\uACFC\uAC70 \uC2DC\uC810\uC73C\uB85C \uB418\uB3CC\uB824 \uAC80\uC99D \uC911..."):
+                try:
+                    client_b = (get_client() if fr["is_ecos"]
+                                else KOSISClient(api_key=os.getenv("KOSIS_API_KEY")))
+                    hist_b = client_b.get_ppi(fr["code"], "200501",
+                                              datetime.now().strftime("%Y%m"))
+                    st.session_state["bt_result"] = backtest(
+                        hist_b, horizon=len(fc), folds=bt_folds)
+                except Exception as e:
+                    st.error(f"\uBC31\uD14C\uC2A4\uD2B8 \uC2E4\uD328: {e}")
+                    st.session_state.pop("bt_result", None)
+
+        if "bt_result" in st.session_state:
+            bt = st.session_state["bt_result"]
+
+            if not bt["ok"]:
+                st.warning(bt["reason"])
+            else:
+                best = bt["methods"].get(bt["best"], {})
+                b1, b2, b3 = st.columns(3)
+                b1.markdown(kpi_card(
+                    "\uAD8C\uC7A5 \uBC29\uBC95", best.get("label", "\u2014"),
+                    sub=f"\uAC80\uC99D {bt['folds_used']}\uD68C \u00B7 \uACFC\uAC70 {bt['n']}\uAC1C\uC6D4",
+                ), unsafe_allow_html=True)
+                b2.markdown(kpi_card(
+                    "\uD3C9\uADE0 \uC624\uCC28(MAPE)",
+                    f"{best['mape']:.2f}" if best.get("mape") is not None else "\u2014",
+                    unit="%", sub=f"\uC608\uCE21 {bt['horizon']}\uAC1C\uC6D4 \uD3C9\uADE0",
+                ), unsafe_allow_html=True)
+                _cov = best.get("coverage")
+                b3.markdown(kpi_card(
+                    "95% \uBC34\uB4DC \uC801\uC911\uB960", f"{_cov:.0f}" if _cov is not None else "\u2014",
+                    unit="%", sub="95%\uC5D0 \uBABB \uBBF8\uCE58\uBA74 \uAD6C\uAC04\uC774 \uC881\uB2E4\uB294 \uB73B",
+                    delta_type="up" if (_cov or 0) < 80 else "neutral",
+                ), unsafe_allow_html=True)
+
+                if bt["best"] == "naive":
+                    st.warning(f"**{bt['best_reason']}**")
+                else:
+                    st.success(f"{best.get('label')} \u2014 {bt['best_reason']}")
+
+                st.markdown("##### \uBC29\uBC95\uBCC4 \uBE44\uAD50")
+                st.dataframe(
+                    to_frame(bt), use_container_width=True, hide_index=True,
+                    column_config={
+                        "MAPE(%)": st.column_config.NumberColumn(
+                            "MAPE(%)", format="%.3f",
+                            help="\uD3C9\uADE0 \uC808\uB300 \uBC31\uBD84\uC728 \uC624\uCC28 \u2014 \uB0AE\uC744\uC218\uB85D \uC815\uD655"),
+                        "MAE": st.column_config.NumberColumn("MAE", format="%.3f"),
+                        "RMSE": st.column_config.NumberColumn("RMSE", format="%.3f"),
+                        "95%\uBC34\uB4DC \uC801\uC911\uB960(%)": st.column_config.NumberColumn(
+                            "95%\uBC34\uB4DC \uC801\uC911\uB960(%)", format="%.1f",
+                            help="\uC2E4\uC81C\uAC12\uC774 \uC2E0\uB8B0\uAD6C\uAC04 \uC548\uC5D0 \uB4E0 \uBE44\uC728. 95%\uC5D0 \uAC00\uAE4C\uC6CC\uC57C \uC815\uC9C1\uD55C \uAD6C\uAC04"),
+                        "naive \uB300\uBE44 \uAC1C\uC120(%)": st.column_config.NumberColumn(
+                            "naive \uB300\uBE44 \uAC1C\uC120(%)", format="%.1f",
+                            help="\uC591\uC218\uBA74 naive\uBCF4\uB2E4 \uC815\uD655, \uC74C\uC218\uBA74 naive\uB9CC \uBABB\uD558\uB2E4\uB294 \uB73B"),
+                        "naive \uC0C1\uB300 \uC2B9\uB960": st.column_config.TextColumn(
+                            "naive \uC0C1\uB300 \uC2B9\uB960",
+                            help="\uAC80\uC99D \uD68C\uCC28 \uC911 naive\uB97C \uC774\uAE34 \uD69F\uC218. \uD3C9\uADE0\uB9CC \uC88B\uACE0 \uC2B9\uB960\uC774 \uB0AE\uC73C\uBA74 \uC6B0\uC5F0\uC77C \uC218 \uC788\uC74C"),
+                    },
+                )
+
+                st.markdown("##### \uC608\uCE21 \uAE30\uAC04\uBCC4 \uC624\uCC28 \u2014 \uBA87 \uAC1C\uC6D4\uAE4C\uC9C0 \uC4F8 \uB9CC\uD55C\uAC00")
+                hz = horizon_frame(bt, bt["best"])
+                if len(hz):
+                    figb = go.Figure()
+                    figb.add_trace(go.Bar(
+                        x=hz["\uC608\uCE21 \uAC1C\uC6D4"], y=hz["MAPE(%)"],
+                        marker_color=POSCO_COLORS["primary"],
+                        hovertemplate="%{x}\uAC1C\uC6D4 \uB4A4<br>MAPE %{y:.2f}%<extra></extra>",
+                    ))
+                    figb.update_layout(
+                        xaxis_title="\uC608\uCE21 \uAC1C\uC6D4", yaxis_title="MAPE (%)",
+                        height=300, showlegend=False,
+                        margin=dict(l=48, r=20, t=20, b=40),
+                    )
+                    st.plotly_chart(figb, use_container_width=True)
+                    st.caption(
+                        "\uBA40\uC5B4\uC9C8\uC218\uB85D \uC624\uCC28\uAC00 \uCEE4\uC9C0\uB294 \uAC8C \uC815\uC0C1\uC785\uB2C8\uB2E4. "
+                        "\uC624\uCC28\uAC00 \uAE09\uACA9\uD788 \uCEE4\uC9C0\uB294 \uC9C0\uC810 \uC774\uD6C4\uB294 \uCC38\uACE0 \uAC00\uCE58\uAC00 \uB0AE\uC2B5\uB2C8\uB2E4."
+                    )
+
+                for note in bt["notes"]:
+                    st.caption(f"\u203B {note}")
+
+                st.caption(
+                    "\uBC31\uD14C\uC2A4\uD2B8\uAC00 \uC88B\uC544\uB3C4 \uBBF8\uB798\uB97C \uBCF4\uC7A5\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4. \uACFC\uAC70\uC5D0 \uC5C6\uB358 \uCDA9\uACA9"
+                    "(\uC6D0\uC790\uC7AC \uAE09\uB4F1\u00B7\uC815\uCC45 \uBCC0\uD654)\uC740 \uC5B4\uB5A4 \uBC29\uBC95\uB3C4 \uC608\uCE21\uD558\uC9C0 \uBABB\uD569\uB2C8\uB2E4."
+                )
+
+
 # ═══════════════════════════════════════════
 # Tab 7: 공유 / 내보내기 가이드
 # ═══════════════════════════════════════════
 with tab_share:
-    st.markdown(section_title("🔗 결과 공유 & 내보내기"), unsafe_allow_html=True)
+    st.markdown(section_title("결과 공유 & 내보내기"), unsafe_allow_html=True)
 
     st.markdown("""
     이 앱의 결과를 **동료에게 공유**하거나 **문서로 저장**하는 방법을 안내합니다.
     """)
 
     with st.container():
-        st.markdown("#### 📋 방법 1 — URL 링크 공유")
+        st.markdown("#### 방법 1 — URL 링크 공유")
         st.markdown("""
         Tab 2 (설비별 PPI 조회)에서 조회한 결과는 URL 파라미터로 저장할 수 있습니다.
 
@@ -1738,7 +2934,7 @@ with tab_share:
     st.divider()
 
     with st.container():
-        st.markdown("#### 📄 방법 2 — PDF / Excel 내보내기")
+        st.markdown("#### 방법 2 — PDF / Excel 내보내기")
         st.markdown("""
         각 탭 하단의 **다운로드 버튼** 으로 바로 받을 수 있습니다.
 
@@ -1751,7 +2947,7 @@ with tab_share:
     st.divider()
 
     with st.container():
-        st.markdown("#### 📸 방법 3 — 스크린샷 / 차트 이미지")
+        st.markdown("#### 방법 3 — 스크린샷 / 차트 이미지")
         st.markdown("""
         각 Plotly 차트 오른쪽 위 카메라 아이콘 📷 으로 PNG 이미지 저장 가능.
         """)
@@ -1760,13 +2956,13 @@ with tab_share:
 
     # 세션 상태 요약
     with st.container():
-        st.markdown("#### 💾 현재 세션 요약")
+        st.markdown("#### 현재 세션 요약")
         session_summary = {
-            "실행 모드": "DEMO" if use_demo else "LIVE (ECOS)",
+            "데이터 소스": "한국은행 ECOS (LIVE)",
             "ECOS Key": "✅ 설정됨" if os.getenv("ECOS_API_KEY") else "❌ 없음",
             "카탈로그": f"{len(get_catalog(api_key=os.getenv('ECOS_API_KEY'))):,}개"
-                         if (not use_demo and os.getenv("ECOS_API_KEY")) else "DEMO",
-            "LLM": llm_provider if not use_demo else "DEMO (None)",
+                         if os.getenv("ECOS_API_KEY") else "미연결",
+            "LLM": llm_provider,
             "Tab 3 비교 결과": "✅ 저장됨" if "multi_series" in st.session_state else "❌ 없음",
             "Tab 5 포트폴리오": "✅ 저장됨" if "port_results" in st.session_state else "❌ 없음",
         }
@@ -1778,12 +2974,11 @@ with tab_share:
 # ═══════════════════════════════════════════
 st.divider()
 st.markdown(
-    f"""
-    <div style="text-align:center; color:#94A3B8; font-size:12px; padding:20px 0;">
-        🏭 <b>POSCO 투자비 물가보정 AI Agent v8</b> · 한국은행 ECOS API 기반 · 교육용 데모
-        <br>
-        <span style="font-size:11px;">© 2026 포스코 투자엔지니어링실</span>
-    </div>
-    """,
+    '<div style="text-align:center; color:#848484; font-size:12px; padding:22px 0;">'
+    "<b>POSCO 투자비 물가보정 시스템</b> · 한국은행 ECOS 생산자물가지수 · "
+    "한국건설기술연구원 건설공사비지수(KOSIS)<br>"
+    '<span style="font-size:11px;">© 2026 포스코 투자엔지니어링실 · 내부 검토용 — '
+    "「국가계약법」상 계약금액조정 산식과 다르므로 공식 계약 근거로 사용 금지</span>"
+    "</div>",
     unsafe_allow_html=True,
 )

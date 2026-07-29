@@ -1,0 +1,13 @@
+# API 서버 전용 의존성.
+# Streamlit Cloud는 루트 requirements.txt만 설치하므로 여기 있는 패키지는
+# Streamlit 배포에 포함되지 않는다 (배포 시간·용량 낭비 방지).
+#
+# 설치: pip install -r requirements.txt -r api/requirements.txt
+# 실행: uvicorn api.main:app --reload --port 8000
+
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9      # 엑셀 파일 업로드 (multipart/form-data)
+
+# 계산 로직은 루트 requirements.txt의 pandas/numpy/statsmodels/requests/openpyxl을
+# 그대로 재사용한다. 여기서 중복 선언하지 않는다.

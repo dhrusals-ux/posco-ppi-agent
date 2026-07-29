@@ -100,14 +100,31 @@ def get_catalog(stat_code: str = "404Y014", api_key: Optional[str] = None) -> pd
 
         return _cached(stat_code, api_key or os.getenv("ECOS_API_KEY", ""))
     except Exception:
-        # Streamlit 미설치 / 런타임 외 환경
-        global _PROCESS_CACHE
-        if "_PROCESS_CACHE" not in globals():
-            _PROCESS_CACHE = {}
-        key = (stat_code, api_key or os.getenv("ECOS_API_KEY", ""))
-        if key not in _PROCESS_CACHE:
-            _PROCESS_CACHE[key] = _load_catalog_raw(stat_code, api_key)
-        return _PROCESS_CACHE[key]
+        # Streamlit 미설치 / 런타임 외 환경 (FastAPI 등 장기 실행 서버 포함)
+        # TTL을 두는 이유: ECOS 품목은 매월 개편될 수 있는데 영구 캐시면
+        # 서버를 재시작할 때까지 낡은 카탈로그를 계속 쓴다.
+        return _process_cached(stat_code, api_key or os.getenv("ECOS_API_KEY", ""))
+
+
+_PROCESS_CACHE: dict = {}
+_PROCESS_CACHE_TTL = 3600  # 초
+
+
+def _process_cached(stat_code: str, api_key: str) -> pd.DataFrame:
+    import time
+
+    key = (stat_code, api_key)
+    hit = _PROCESS_CACHE.get(key)
+    if hit is not None:
+        ts, df = hit
+        if time.monotonic() - ts < _PROCESS_CACHE_TTL:
+            return df
+
+    df = _load_catalog_raw(stat_code, api_key)
+    # 빈 결과(조회 실패)는 캐시하지 않는다 — 일시적 오류를 1시간 고정시키면 안 된다
+    if df is not None and len(df) > 0:
+        _PROCESS_CACHE[key] = (time.monotonic(), df)
+    return df
 
 
 # ─────────────────────────────────────────────

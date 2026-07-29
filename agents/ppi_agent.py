@@ -24,7 +24,6 @@ except ImportError:
     HAS_GEMINI = False
 
 from utils.ecos_client import ECOSClient
-from utils.demo_data import DemoECOSClient
 from data.ppi_categories import get_all_items, find_by_code, find_by_name
 
 
@@ -399,22 +398,23 @@ def run_ppi_agent(
         used_llm = "규칙 기반 파서 (LLM 실패 폴백)"
         provider = "none"
 
-    # 2. ECOS 조회
+    # 2. ECOS 조회 (LIVE 전용)
     ecos_key = os.getenv("ECOS_API_KEY", "").strip()
-    if use_demo or not ecos_key:
-        ecos = DemoECOSClient()
-        data_source = "📦 DEMO DATA (가상 시계열)"
-    else:
-        ecos = ECOSClient()
-        data_source = "🏦 한국은행 ECOS API"
+    if not ecos_key:
+        raise RuntimeError(
+            "ECOS_API_KEY가 설정되지 않았습니다. "
+            "사이드바에 인증키를 입력하거나 secrets에 등록하세요."
+        )
+    ecos = ECOSClient()
+    data_source = "🏦 한국은행 ECOS API"
 
     # ★ 사용자가 직접 지정한 ITEM_CODE가 있으면 파서 결과를 덮어쓰기
     if override_code:
         parsed["recommended_code"] = override_code.strip()
         parsed["override_applied"] = True
         parsed["auto_matched"] = False
-    elif not use_demo and ecos_key:
-        # ★ LIVE 모드: ECOS 실시간 카탈로그로 자동 매칭 시도
+    else:
+        # ECOS 실시간 카탈로그로 자동 매칭 시도
         try:
             from utils.ecos_catalog import get_catalog, auto_match_code
             catalog = get_catalog(api_key=ecos_key)

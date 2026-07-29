@@ -1,0 +1,115 @@
+name: 월간 물가동향 메일 리포트
+
+# Streamlit Cloud는 예약 실행을 못 한다 (접속이 없으면 앱이 잠든다).
+# 그래서 메일 발송은 GitHub Actions가 담당한다.
+
+on:
+  schedule:
+    # 매월 25일 00:00 UTC = 09:00 KST
+    # 25일인 이유: ECOS 생산자물가지수는 익월 중하순에 발표된다.
+    # 1일에 돌리면 아직 신규 발표가 없어 지난달 내용을 다시 보내게 된다.
+    - cron: "0 0 25 * *"
+
+  # 수동 실행 — 한 달 기다리지 않고 시험할 수 있어야 한다
+  workflow_dispatch:
+    inputs:
+      send:
+        description: "실제로 메일을 발송할지 (false면 미리보기만)"
+        type: boolean
+        default: false        # ★ 기본은 미리보기. 실수로 눌러도 메일이 안 나간다
+      force:
+        description: "신규 발표가 없어도 강제 발송"
+        type: boolean
+        default: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 의존성 설치
+        # 리포트에는 웹 프레임워크가 필요 없다. 계산·조회 패키지만 넣어 실행을 가볍게 한다.
+        run: pip install --quiet pandas numpy requests
+
+      - name: 지난 발송 기준월 복원
+        # 중복 발송 방지용 상태. 캐시가 없으면(첫 실행) 그냥 비어 있고,
+        # should_send 검사는 통과한다.
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: .report-state
+          key: report-state-
+          restore-keys: report-state-
+
+      - name: 지난 발송 기준월 읽기
+        id: last
+        run: |
+          if [ -f .report-state ]; then
+            echo "period=$(cat .report-state)" >> "$GITHUB_OUTPUT"
+            echo "지난 발송 기준월: $(cat .report-state)"
+          else
+            echo "period=" >> "$GITHUB_OUTPUT"
+            echo "지난 발송 기록 없음 (첫 실행)"
+          fi
+
+      - name: 리포트 생성 · 발송
+        id: run
+        env:
+          ECOS_API_KEY: ${{ secrets.ECOS_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          REPORT_RECIPIENTS: ${{ secrets.REPORT_RECIPIENTS }}
+          LAST_SENT_PERIOD: ${{ steps.last.outputs.period }}
+        run: |
+          # 예약 실행은 발송, 수동 실행은 입력값에 따른다.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            FLAGS="--send"
+          else
+            FLAGS=""
+            [ "${{ inputs.send }}" = "true" ] && FLAGS="--send"
+            [ "${{ inputs.force }}" = "true" ] && FLAGS="$FLAGS --force"
+          fi
+
+          echo "실행 옵션: ${FLAGS:-(미리보기)}"
+          python -m scripts.send_monthly_report --out preview.html $FLAGS | tee run.log
+
+          # 발송에 성공했을 때만 기준월을 기록한다.
+          # 미리보기나 실패 때 기록하면 다음 달에 발송을 건너뛰게 된다.
+          if grep -q '^발송 완료:' run.log; then
+            grep '^LAST_SENT_PERIOD=' run.log | cut -d= -f2 > .report-state
+            echo "sent=true" >> "$GITHUB_OUTPUT"
+            echo "기준월 기록: $(cat .report-state)"
+          else
+            echo "sent=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 발송 기준월 저장
+        if: steps.run.outputs.sent == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .report-state
+          key: report-state-${{ github.run_id }}
+
+      - name: 미리보기 파일 업로드
+        # 발송 여부와 무관하게 항상 올린다. 메일이 어떻게 생겼는지
+        # Actions 실행 페이지에서 내려받아 확인할 수 있다.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-preview
+          path: |
+            preview.html
+            run.log
+          retention-days: 30
+          if-no-files-found: warn

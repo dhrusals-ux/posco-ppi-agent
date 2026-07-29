@@ -1,4 +1,5 @@
-streamlit>=1.32.0
+# 1.40+ 필요: column_config format="localized" (금액 천단위 구분) 사용
+streamlit>=1.40.0
 requests>=2.31.0
 pandas>=2.1.0
 plotly>=5.18.0
@@ -7,3 +8,8 @@ openai>=1.12.0
 google-genai>=0.3.0
 reportlab>=4.0.0
 xlsxwriter>=3.1.0
+statsmodels>=0.14.0
+# 엑셀 일괄 보정 업로드용 — pandas.read_excel 엔진.
+# openpyxl=.xlsx/.xlsm, xlrd=구형 .xls. 없으면 업로드 시 ImportError로 앱이 죽는다.
+openpyxl>=3.1.0
+xlrd>=2.0.1

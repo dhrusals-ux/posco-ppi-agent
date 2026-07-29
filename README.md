@@ -1,7 +1,9 @@
 # 📊 투자비 물가보정 AI Agent
 
-포스코 투자엔지니어링실 교육용 **Streamlit 데모 앱**.
+포스코 투자엔지니어링실 **내부 투자비 물가보정 도구** (Streamlit).
 한국은행 ECOS API의 생산자물가지수(PPI)를 활용해 과거 투자비를 현재가치로 자동 환산합니다.
+
+**공사비 물가보정**: 한국건설기술연구원 **건설공사비지수(KOSIS)** 연동으로 설비비(ECOS PPI)뿐 아니라 공사 공종별 물가보정도 지원합니다. 공종 분류는 KOSIS 통계표에서 자동으로 불러옵니다.
 
 ![badge](https://img.shields.io/badge/Streamlit-1.32+-FF4B4B?logo=streamlit)
 ![badge](https://img.shields.io/badge/Python-3.10+-blue?logo=python)
@@ -10,7 +12,7 @@
 
 ## ✨ 주요 기능
 
-### 🎬 DEMO 모드 (API 키 불필요!)
+### 🏦 LIVE 전용 (한국은행 ECOS)
 - 가상 PPI 데이터로 **모든 기능을 즉시 체험**
 - 교육/발표 시 네트워크 문제 없이 안정적 시연
 

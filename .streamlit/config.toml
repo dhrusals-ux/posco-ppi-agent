@@ -1,0 +1,22 @@
+# Streamlit 테마 고정 — POSCO CI (posco.co.kr 실측값)
+#
+# base를 "light"로 못박는 이유:
+#   Streamlit은 기본적으로 열람자의 OS 다크모드를 따라간다. theme.py가 CI 색상
+#   (#222222 본문, #022846 제목)을 하드코딩하므로 다크모드에서는 어두운 배경에
+#   어두운 글자가 겹쳐 제목과 캡션이 사실상 안 보인다.
+#   사내 검토 도구가 열람자 환경에 따라 다르게 보이면 안 되므로 라이트로 고정한다.
+
+[theme]
+base = "light"
+primaryColor = "#005C9C"            # 포스코 블루 (실측)
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#FAFAFA"
+textColor = "#222222"                # 실측 본문색
+font = "sans serif"
+
+[server]
+# 견적 엑셀 업로드 상한 (MB). 기본 200MB는 불필요하게 크다.
+maxUploadSize = 20
+
+[browser]
+gatherUsageStats = false
