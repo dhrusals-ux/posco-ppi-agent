@@ -137,6 +137,41 @@ main{max-width:1180px;margin:0 auto;padding:18px 18px 80px}
 .entry-foot button:hover{border-color:var(--line);color:var(--text)}
 .entry-foot button.del:hover{color:var(--loss);border-color:var(--loss)}
 
+.lesson{
+  margin:0 15px 12px;padding:10px 13px;border-radius:var(--radius-sm);
+  background:var(--accent-soft);border-left:3px solid var(--accent);
+  font-size:13.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word
+}
+.lesson .k{
+  display:block;font-size:11px;font-weight:700;letter-spacing:.3px;
+  color:var(--accent);margin-bottom:4px
+}
+.les-group{margin-bottom:22px}
+.les-group h4{
+  margin:0 0 10px;font-size:12.5px;font-weight:700;color:var(--muted);
+  letter-spacing:.3px;display:flex;align-items:center;gap:8px
+}
+.les-group h4::after{content:"";flex:1;height:1px;background:var(--line)}
+.les{
+  display:flex;gap:12px;padding:13px 15px;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--radius);margin-bottom:9px
+}
+.les .when{
+  flex:0 0 74px;font-size:11.5px;color:var(--muted);font-weight:600;
+  font-variant-numeric:tabular-nums;line-height:1.5
+}
+.les .when b{display:block;font-size:15px;color:var(--text);letter-spacing:-.3px}
+.les .main{flex:1;min-width:0}
+.les .src{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:6px;font-size:12px}
+.les .src .sym{font-weight:700;font-size:13.5px}
+.les .src .p{font-weight:700;font-variant-numeric:tabular-nums}
+.les .txt{white-space:pre-wrap;word-break:break-word;font-size:13.5px;line-height:1.7}
+.les .acts{display:flex;gap:4px;align-items:flex-start}
+.les .acts button{font-size:11.5px;padding:4px 8px;border-radius:7px;color:var(--faint);border:1px solid transparent}
+.les .acts button:hover{border-color:var(--line);color:var(--text)}
+.les .acts button.del:hover{color:var(--loss);border-color:var(--loss)}
+.les.memo{border-left:3px solid var(--warn)}
+
 /* ---------- week ---------- */
 .week-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:18px}
 .wday{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-sm);padding:10px;min-height:96px;cursor:pointer;transition:.15s}
@@ -312,6 +347,7 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
     <button data-view="day" class="on">일별</button>
     <button data-view="week">주별</button>
     <button data-view="month">월간</button>
+    <button data-view="lessons">시사점</button>
     <button data-view="stats">통계</button>
   </div>
   <div class="spacer"></div>
@@ -441,6 +477,12 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
       </div>
 
       <div class="field">
+        <label for="f-lesson">🎯 최종 정리 시사점 <span style="font-weight:400">(다음 매매에 남길 한 줄)</span></label>
+        <textarea id="f-lesson" style="min-height:66px" placeholder="예: 거래량 없는 돌파는 따라가지 않는다 — 다음엔 20일선 눌림까지 기다린다"></textarea>
+        <div class="hint">여기 적은 내용은 <b>시사점</b> 탭에 따로 모여 누적됩니다.</div>
+      </div>
+
+      <div class="field">
         <label>차트 이미지</label>
         <div class="drop" id="drop">
           <b>📈 차트 이미지 붙여넣기 · 드래그 · 클릭 업로드</b>
@@ -454,6 +496,32 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
       <button type="button" class="btn ghost danger" id="btn-delete" style="margin-right:auto;display:none">삭제</button>
       <button type="button" class="btn" id="btn-cancel">취소</button>
       <button type="button" class="btn primary" id="btn-save">저장</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="lesson-modal">
+  <form class="modal" method="dialog">
+    <div class="modal-head"><h3 id="lesson-title">🎯 시사점 추가</h3><div class="spacer"></div>
+      <button type="button" class="btn ghost icon" id="les-close">✕</button></div>
+    <div class="modal-body">
+      <p style="margin:0 0 16px;color:var(--muted);font-size:13px;line-height:1.6">
+        특정 매매와 별개로 남기고 싶은 깨달음·원칙을 기록합니다. 시사점 탭에 함께 쌓입니다.
+      </p>
+      <div class="row c2">
+        <div class="field"><label for="les-date">날짜</label><input type="date" id="les-date"></div>
+        <div class="field"><label for="les-title">제목 <span style="font-weight:400">(선택)</span></label>
+          <input type="text" id="les-title-in" placeholder="예: 손절 원칙"></div>
+      </div>
+      <div class="field"><label for="les-text">시사점 *</label>
+        <textarea id="les-text" placeholder="다음 매매에 남길 내용을 적어주세요"></textarea></div>
+      <div class="field"><label for="les-tags">태그 <span style="font-weight:400">(쉼표로 구분)</span></label>
+        <input type="text" id="les-tags" placeholder="예: 원칙, 리스크관리"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn ghost danger" id="les-delete" style="margin-right:auto;display:none">삭제</button>
+      <button type="button" class="btn" id="les-cancel">취소</button>
+      <button type="button" class="btn primary" id="les-save">저장</button>
     </div>
   </form>
 </dialog>
@@ -777,13 +845,15 @@ const SB = {
 const toRow = e => ({
   id:e.id, date:e.date, time:e.time||null, symbol:e.symbol, side:e.side||"long",
   entry:e.entry, exit:e.exit, qty:e.qty, fee:e.fee, pnl:e.pnl, pnl_pct:e.pnlPct,
-  tags:e.tags||[], comment:e.comment||"", rating:e.rating||0, images:e.images||[],
+  tags:e.tags||[], comment:e.comment||"", lesson:e.lesson||"", is_lesson:!!e.isLesson,
+  rating:e.rating||0, images:e.images||[],
   created_at:e.createdAt||new Date().toISOString(), updated_at:new Date().toISOString()
 });
 const fromRow = r => ({
   id:r.id, date:r.date, time:r.time||"", symbol:r.symbol, side:r.side||"long",
   entry:r.entry, exit:r.exit, qty:r.qty, fee:r.fee, pnl:r.pnl, pnlPct:r.pnl_pct,
-  tags:r.tags||[], comment:r.comment||"", rating:r.rating||0, images:r.images||[],
+  tags:r.tags||[], comment:r.comment||"", lesson:r.lesson||"", isLesson:!!r.is_lesson,
+  rating:r.rating||0, images:r.images||[],
   createdAt:r.created_at, updatedAt:r.updated_at
 });
 
@@ -896,14 +966,23 @@ async function hydrateImages(){
 }
 
 /* ---------------- filtering / aggregation ---------------- */
-function visible(){
+function matches(e, q){
+  return (e.symbol||"").toLowerCase().includes(q) ||
+         (e.comment||"").toLowerCase().includes(q) ||
+         (e.lesson||"").toLowerCase().includes(q) ||
+         (e.tags||[]).some(t=>t.toLowerCase().includes(q));
+}
+function visible(){                       // 매매 일지만 (단독 시사점 메모 제외)
   const q = state.query.trim().toLowerCase();
-  if(!q) return state.entries;
-  return state.entries.filter(e =>
-    (e.symbol||"").toLowerCase().includes(q) ||
-    (e.comment||"").toLowerCase().includes(q) ||
-    (e.tags||[]).some(t=>t.toLowerCase().includes(q))
-  );
+  const trades = state.entries.filter(e=>!e.isLesson);
+  return q ? trades.filter(e=>matches(e,q)) : trades;
+}
+function lessonItems(){                   // 시사점이 적힌 모든 기록 (최신순)
+  const q = state.query.trim().toLowerCase();
+  return state.entries
+    .filter(e => (e.lesson||"").trim())
+    .filter(e => !q || matches(e,q))
+    .sort((a,b)=> a.date===b.date ? ((b.time||"")<(a.time||"")?-1:1) : (a.date<b.date?1:-1));
 }
 function inRange(from,to){
   const a=ymd(from), b=ymd(to);
@@ -945,11 +1024,12 @@ function render(){
 function renderView(){
   $$("#tabs button").forEach(b=>b.classList.toggle("on", b.dataset.view===state.view));
   const v = state.view;
-  const navHidden = (v==="stats") ? "none" : "";
+  const navHidden = (v==="stats" || v==="lessons") ? "none" : "";
   $("#prev").style.display = $("#next").style.display = $("#btn-today").style.display = navHidden;
   if(v==="day")   renderDay();
   else if(v==="week")  renderWeek();
   else if(v==="month") renderMonth();
+  else if(v==="lessons") renderLessons();
   else renderStats();
 }
 function statCards(items){
@@ -986,6 +1066,7 @@ function entryCard(e){
     '</div>'+
     ((e.tags||[]).length?'<div class="tags">'+e.tags.map(t=>'<span class="tag">#'+esc(t)+'</span>').join("")+'</div>':"")+
     (e.comment?'<div class="comment">'+esc(e.comment)+'</div>':"")+
+    (e.lesson?'<div class="lesson"><span class="k">🎯 최종 정리 시사점</span>'+esc(e.lesson)+'</div>':"")+
     (shots.length?'<div class="shots">'+shots.map((id,i)=>
         '<img loading="lazy" src="'+BLANK+'" data-img="'+id+'" data-entry="'+e.id+'" data-i="'+i+'" alt="차트">').join("")+'</div>':"")+
     '<div class="entry-foot">'+
@@ -1208,6 +1289,94 @@ function renderStats(){
       (a.best?entryCard(a.best):"")+(a.worst&&a.worst.id!==(a.best&&a.best.id)?entryCard(a.worst):"")+'</div>';
 }
 
+/* ---------------- view: 시사점 (누적 보관) ---------------- */
+function lessonCard(e){
+  const trade = !e.isLesson;
+  const d = parseYmd(e.date);
+  return ''+
+  '<div class="les'+(trade?"":" memo")+'" data-lesson="'+e.id+'">'+
+    '<div class="when"><b>'+(d.getMonth()+1)+'/'+d.getDate()+'</b>'+
+      DOW[(d.getDay()+6)%7]+'요일'+(e.time?'<br>'+e.time:"")+'</div>'+
+    '<div class="main">'+
+      '<div class="src">'+
+        (trade
+          ? '<span class="sym">'+esc(e.symbol||"(무제)")+'</span>'+
+            '<span class="badge '+(e.side==="short"?"short":"long")+'">'+(e.side==="short"?"숏":"롱")+'</span>'+
+            (e.pnl!=null?'<span class="p '+cls(e.pnl)+'">'+signed(e.pnl)+'</span>':"")
+          : '<span class="sym">📌 '+esc(e.symbol||"메모")+'</span>')+
+        (e.tags||[]).map(t=>'<span class="tag">#'+esc(t)+'</span>').join("")+
+      '</div>'+
+      '<div class="txt">'+esc(e.lesson)+'</div>'+
+    '</div>'+
+    '<div class="acts">'+
+      (trade?'<button class="goto" data-date="'+e.date+'" title="원본 일지 보기">📄</button>':"")+
+      '<button class="edit-les" data-id="'+e.id+'">✏️</button>'+
+      '<button class="del-les del" data-id="'+e.id+'">🗑</button>'+
+    '</div>'+
+  '</div>';
+}
+
+function renderLessons(){
+  const items = lessonItems();
+  const all = state.entries.filter(e=>(e.lesson||"").trim());
+  const thisMonth = ymd(new Date()).slice(0,7);
+  const tagCount = new Map();
+  all.forEach(e=>(e.tags||[]).forEach(t=>tagCount.set(t,(tagCount.get(t)||0)+1)));
+  const topTag = Array.from(tagCount.entries()).sort((a,b)=>b[1]-a[1])[0];
+
+  period("시사점 아카이브", all.length ? all.length+"개 누적" : "아직 기록 없음");
+  statCards([
+    {k:"누적 시사점", v:all.length+"개", x:state.query?items.length+"개 검색됨":""},
+    {k:"이번 달", v:all.filter(e=>e.date.slice(0,7)===thisMonth).length+"개"},
+    {k:"매매에서", v:all.filter(e=>!e.isLesson).length+"개", x:"일지에 적은 시사점"},
+    {k:"별도 메모", v:all.filter(e=>e.isLesson).length+"개"},
+    {k:"많이 쓴 태그", v:topTag?("#"+esc(topTag[0])):"—", x:topTag?topTag[1]+"회":""}
+  ]);
+
+  const bar =
+    '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">'+
+      '<button class="btn primary" id="add-lesson">+ 시사점 추가</button>'+
+      '<button class="btn" id="export-lessons">📄 모아서 내보내기 (.md)</button>'+
+    '</div>';
+
+  if(!items.length){
+    $("#view").innerHTML = bar + emptyBox(
+      state.query ? "검색 결과가 없습니다" : "아직 쌓인 시사점이 없습니다",
+      state.query ? "다른 검색어로 찾아보세요." :
+      "일지를 쓸 때 <b>🎯 최종 정리 시사점</b> 칸에 남긴 내용이 여기에 계속 쌓입니다.");
+    return;
+  }
+
+  const groups = new Map();
+  items.forEach(e=>{
+    const k = e.date.slice(0,7);
+    if(!groups.has(k)) groups.set(k,[]);
+    groups.get(k).push(e);
+  });
+  const body = Array.from(groups.entries()).map(([m,list])=>
+    '<div class="les-group"><h4>'+m.replace("-","년 ")+'월 · '+list.length+'개</h4>'+
+      list.map(lessonCard).join("")+'</div>').join("");
+
+  $("#view").innerHTML = bar + body;
+}
+
+function lessonsMarkdown(){
+  const items = state.entries.filter(e=>(e.lesson||"").trim())
+    .sort((a,b)=> a.date===b.date ? ((a.time||"")<(b.time||"")?-1:1) : (a.date<b.date?-1:1));
+  let out = "# 매매일지 시사점 모음\n\n총 "+items.length+"개 · "+ymd(new Date())+" 기준\n";
+  let month = "";
+  items.forEach(e=>{
+    const m = e.date.slice(0,7);
+    if(m!==month){ month = m; out += "\n## "+m.replace("-","년 ")+"월\n\n"; }
+    const head = e.isLesson
+      ? e.date+" · 📌 "+(e.symbol||"메모")
+      : e.date+" · "+(e.symbol||"")+" ("+(e.side==="short"?"숏":"롱")+(e.pnl!=null?", "+signed(e.pnl):"")+")";
+    out += "- **"+head+"**\n  - "+e.lesson.replace(/\n/g,"\n  - ")+"\n";
+    if((e.tags||[]).length) out += "  - 태그: "+e.tags.map(t=>"#"+t).join(" ")+"\n";
+  });
+  return out;
+}
+
 /* ---------------- images ---------------- */
 function fileToImage(file){
   return new Promise((res,rej)=>{
@@ -1301,6 +1470,7 @@ function openModal(entry, presetDate){
   $("#f-pnlpct").value  = entry && entry.pnlPct!=null ? entry.pnlPct : "";
   $("#f-tags").value    = entry ? (entry.tags||[]).join(", ") : "";
   $("#f-comment").value = entry ? (entry.comment||"") : "";
+  $("#f-lesson").value  = entry ? (entry.lesson||"") : "";
   setSide(entry ? (entry.side||"long") : "long");
   setRating(entry ? (entry.rating||0) : 0);
   if(entry) state.pending = Store.pendingFor(entry);
@@ -1328,6 +1498,8 @@ async function saveEntry(){
     pnl: num($("#f-pnl").value), pnlPct: num($("#f-pnlpct").value),
     tags: $("#f-tags").value.split(",").map(s=>s.trim()).filter(Boolean),
     comment: $("#f-comment").value.trim(),
+    lesson: $("#f-lesson").value.trim(),
+    isLesson: prev ? !!prev.isLesson : false,
     rating: ratingVal,
     images: keptIds,
     createdAt: prev ? prev.createdAt : new Date().toISOString(),
@@ -1357,6 +1529,67 @@ async function deleteEntry(id){
   state.entries = state.entries.filter(x=>x.id!==id);
   if(modal.open) closeModal();
   render(); toast("삭제되었습니다");
+}
+
+/* ---------------- 단독 시사점 (매매와 무관한 메모) ---------------- */
+const lesModal = $("#lesson-modal");
+let lesEditing = null;
+
+function openLesson(entry){
+  lesEditing = entry || null;
+  $("#lesson-title").textContent = entry ? "🎯 시사점 수정" : "🎯 시사점 추가";
+  $("#les-date").value = entry ? entry.date : ymd(new Date());
+  $("#les-title-in").value = entry ? (entry.symbol||"") : "";
+  $("#les-text").value = entry ? (entry.lesson||"") : "";
+  $("#les-tags").value = entry ? (entry.tags||[]).join(", ") : "";
+  $("#les-delete").style.display = entry ? "inline-block" : "none";
+  lesModal.showModal();
+  setTimeout(()=>$("#les-text").focus(), 50);
+}
+
+async function saveLesson(){
+  const text = $("#les-text").value.trim();
+  if(!text){ toast("시사점 내용을 입력하세요"); $("#les-text").focus(); return; }
+  const prev = lesEditing;
+  const e = {
+    id: prev ? prev.id : uid(),
+    date: $("#les-date").value || ymd(new Date()),
+    time: prev ? (prev.time||"") : "",
+    symbol: $("#les-title-in").value.trim() || "메모",
+    side: "long",
+    entry:null, exit:null, qty:null, fee:null, pnl:null, pnlPct:null,
+    tags: $("#les-tags").value.split(",").map(t=>t.trim()).filter(Boolean),
+    comment: prev ? (prev.comment||"") : "",
+    lesson: text,
+    isLesson: true,
+    rating: 0,
+    images: prev ? (prev.images||[]) : [],
+    createdAt: prev ? prev.createdAt : new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  const btn = $("#les-save"); btn.disabled = true; btn.textContent = "저장 중…";
+  try{
+    const saved = (await Store.saveEntry(e, [], [])) || e;
+    state.entries = state.entries.filter(x=>x.id!==saved.id).concat([saved]).sort(cmpEntry);
+    lesModal.close(); lesEditing = null;
+    render(); toast(prev ? "시사점을 수정했습니다" : "시사점을 저장했습니다 🎯");
+  }catch(err){ console.error(err); toast("저장하지 못했습니다: "+err.message); }
+  finally{ btn.disabled = false; btn.textContent = "저장"; }
+}
+
+$("#les-save").onclick = saveLesson;
+$("#les-cancel").onclick = ()=>{ lesModal.close(); lesEditing=null; };
+$("#les-close").onclick = ()=>{ lesModal.close(); lesEditing=null; };
+$("#les-delete").onclick = ()=>{ if(lesEditing) deleteEntry(lesEditing.id); };
+lesModal.addEventListener("cancel", e=>{ e.preventDefault(); lesModal.close(); lesEditing=null; });
+$("#lesson-modal").addEventListener("keydown", e=>{
+  if((e.metaKey||e.ctrlKey) && e.key==="Enter"){ e.preventDefault(); saveLesson(); }
+});
+
+async function exportLessons(){
+  const md = lessonsMarkdown();
+  if(!md.trim()){ toast("내보낼 시사점이 없습니다"); return; }
+  await download("매매일지-시사점-"+ymd(new Date())+".md", new Blob([md],{type:"text/markdown;charset=utf-8"}));
 }
 
 /* ---------------- lightbox ---------------- */
@@ -1428,28 +1661,34 @@ async function importJSON(file){
   }catch(err){ console.error(err); toast("불러오기에 실패했습니다"); }
 }
 async function exportCSV(){
-  const head = ["날짜","시간","종목","방향","진입가","청산가","수량","비용","손익","수익률(%)","평점","태그","코멘트"];
+  const head = ["구분","날짜","시간","종목","방향","진입가","청산가","수량","비용","손익","수익률(%)","평점","태그","코멘트","최종 정리 시사점"];
   const q = v => '"'+String(v==null?"":v).replace(/"/g,'""')+'"';
-  const rows = state.entries.map(e=>[e.date,e.time,e.symbol,e.side==="short"?"숏":"롱",e.entry,e.exit,e.qty,e.fee,
-    e.pnl,e.pnlPct,e.rating,(e.tags||[]).join(" "),(e.comment||"").replace(/\n/g," ")].map(q).join(","));
+  const rows = state.entries.map(e=>[e.isLesson?"시사점":"매매",e.date,e.time,e.symbol,
+    e.isLesson?"":(e.side==="short"?"숏":"롱"),e.entry,e.exit,e.qty,e.fee,
+    e.pnl,e.pnlPct,e.rating,(e.tags||[]).join(" "),(e.comment||"").replace(/\n/g," "),
+    (e.lesson||"").replace(/\n/g," ")].map(q).join(","));
   await download("trading-journal-"+ymd(new Date())+".csv",
     new Blob(["﻿"+head.map(q).join(",")+"\n"+rows.join("\n")],{type:"text/csv;charset=utf-8"}));
 }
 async function addSample(){
   const base = new Date(); const mk=(off,o)=>Object.assign({
     id:uid(), date:ymd(addDays(base,-off)), time:"09:"+pad(10+off), side:"long",
-    entry:null, exit:null, qty:null, fee:null, pnlPct:null, tags:[], comment:"", rating:3,
+    entry:null, exit:null, qty:null, fee:null, pnlPct:null, tags:[], comment:"", lesson:"", isLesson:false, rating:3,
     images:[], createdAt:new Date().toISOString(), updatedAt:new Date().toISOString()
   }, o);
   const s = [
     mk(0,{symbol:"삼성전자", entry:71500, exit:73200, qty:100, fee:3200, pnl:166800, pnlPct:2.38, rating:4,
-        tags:["돌파매매","분할익절"], comment:"진입 근거: 전고점 돌파 + 거래량 증가\n청산 근거: 1차 목표가 도달, 절반 익절 후 나머지 본절 스톱\n잘한 점: 계획대로 분할 청산\n개선할 점: 진입이 조금 늦었다"}),
+        tags:["돌파매매","분할익절"], comment:"진입 근거: 전고점 돌파 + 거래량 증가\n청산 근거: 1차 목표가 도달, 절반 익절 후 나머지 본절 스톱\n잘한 점: 계획대로 분할 청산\n개선할 점: 진입이 조금 늦었다",
+        lesson:"돌파 확인 후 진입해도 늦지 않다 — 미리 사서 버티지 말 것."}),
     mk(1,{symbol:"BTCUSDT", side:"short", entry:64200, exit:64900, qty:0.3, fee:20, pnl:-230, pnlPct:-1.09, rating:2,
-        tags:["역추세","뇌동매매"], comment:"근거 없이 반등 노린 숏. 추세 역행 매매는 금지."}),
+        tags:["역추세","뇌동매매"], comment:"근거 없이 반등 노린 숏. 추세 역행 매매는 금지.",
+        lesson:"추세를 거스르는 자리는 진입하지 않는다."}),
     mk(3,{symbol:"에코프로", entry:98000, exit:101500, qty:30, fee:1500, pnl:103500, pnlPct:3.57, rating:5,
-        tags:["눌림목","손절지킴"], comment:"20일선 눌림 지지 확인 후 진입. 손절 라인 명확히 두고 대응."}),
+        tags:["눌림목","손절지킴"], comment:"20일선 눌림 지지 확인 후 진입. 손절 라인 명확히 두고 대응.",
+        lesson:"손절선을 먼저 정한 매매는 결과와 무관하게 좋은 매매다."}),
     mk(4,{symbol:"NVDA", entry:118.4, exit:115.9, qty:50, fee:5, pnl:-130, pnlPct:-2.11, rating:3,
-        tags:["갭상승추격"], comment:"갭 상승 추격 진입 실패. 시초가 30분은 관망하기로."}),
+        tags:["갭상승추격"], comment:"갭 상승 추격 진입 실패. 시초가 30분은 관망하기로.",
+        lesson:"시초가 30분은 관망한다."}),
     mk(7,{symbol:"카카오", entry:38500, exit:39900, qty:80, fee:900, pnl:111100, pnlPct:3.64, rating:4,
         tags:["돌파매매"], comment:"박스권 상단 돌파. 계획한 목표가에서 전량 청산."})
   ];
@@ -1499,6 +1738,14 @@ $("#view").addEventListener("click", e=>{
       toast("복제본 — 저장하면 새 일지가 됩니다");
     }
     return;
+  }
+  if(e.target.closest("#add-lesson")){ openLesson(null); return; }
+  if(e.target.closest("#export-lessons")){ exportLessons(); return; }
+  const les = e.target.closest(".les .acts button");
+  if(les){
+    const en = state.entries.find(x=>x.id===les.dataset.id);
+    if(les.classList.contains("edit-les") && en){ en.isLesson ? openLesson(en) : openModal(en); return; }
+    if(les.classList.contains("del-les") && en){ deleteEntry(en.id); return; }
   }
   const cell = e.target.closest("[data-date]");
   if(cell) gotoDate(cell.dataset.date);
@@ -1585,8 +1832,8 @@ document.addEventListener("keydown", e=>{
   else if(e.key==="ArrowLeft") shiftCursor(-1);
   else if(e.key==="ArrowRight") shiftCursor(1);
   else if(e.key==="t" || e.key==="T"){ state.cursor=new Date(); render(); }
-  else if(["1","2","3","4"].includes(e.key)){
-    state.view = ["day","week","month","stats"][+e.key-1];
+  else if(["1","2","3","4","5"].includes(e.key)){
+    state.view = ["day","week","month","lessons","stats"][+e.key-1];
     localStorage.setItem("tj-view", state.view); render();
   }
 });
