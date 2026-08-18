@@ -26,6 +26,17 @@ html[data-theme="light"]{
   --loss:#dc2626; --loss-soft:rgba(220,38,38,.12);
   --shadow:0 8px 24px rgba(20,32,50,.10);
 }
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+  --bg:#f4f6fa; --bg-soft:#eceff5; --panel:#ffffff; --panel-2:#f7f9fc;
+  --line:#dde3ec; --line-soft:#e8edf4;
+  --text:#18202c; --muted:#5d6b7f; --faint:#8b97a8;
+  --accent:#2563eb; --accent-soft:rgba(37,99,235,.10);
+  --win:#15803d; --win-soft:rgba(21,128,61,.12);
+  --loss:#dc2626; --loss-soft:rgba(220,38,38,.12);
+  --shadow:0 8px 24px rgba(20,32,50,.10);
+}
+}
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
 body{
@@ -275,6 +286,10 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
   <button id="m-export">⬇️ 백업 내보내기 (JSON)</button>
   <button id="m-import">⬆️ 백업 불러오기</button>
   <button id="m-csv">📄 CSV 내보내기</button>
+  <hr>
+  <div id="embed-note" style="display:none;padding:8px 12px;font-size:11.5px;color:var(--warn);line-height:1.5">
+    ⚠️ 미리보기(임베드) 화면에서는 파일 다운로드가 막힐 수 있어요. 백업은 페이지를 <b>새 탭에서 열고</b> 진행하세요.
+  </div>
   <hr>
   <button id="m-sample">🧪 샘플 데이터 넣기</button>
   <button id="m-wipe" style="color:var(--loss)">🗑 전체 삭제</button>
@@ -979,19 +994,44 @@ function dataURLToBlob(u){
   for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
   return new Blob([arr],{type:mime});
 }
-function download(name, blob){
-  const a = document.createElement("a");
+async function hostDownloads(){
+  try{
+    if(window.claude && typeof window.claude.use==="function") return await window.claude.use("downloads");
+  }catch(e){}
+  return null;
+}
+async function download(name, blob){
+  const dl = await hostDownloads();
+  if(dl){                                   // claude.ai 아티팩트 등 임베드 환경
+    try{
+      await dl.save({filename:name, data:blob});
+      toast("파일이 저장되었습니다 ✅");
+    }catch(err){
+      const code = err && err.code;
+      if(code==="extension_not_enabled" && /\.csv$/.test(name)){
+        try{
+          await dl.save({filename:name.replace(/\.csv$/,".txt"), data:blob});
+          toast("csv 저장이 막혀 .txt로 저장했습니다 (확장자만 .csv로 바꾸면 됩니다)");
+        }catch(e2){ toast("저장하지 못했습니다: "+((e2&&e2.message)||"")); }
+      }
+      else if(code==="declined") toast("저장이 취소되었습니다");
+      else if(code==="too_large") toast("파일이 너무 큽니다 (16MB 초과) — 이미지가 적은 기간만 나눠 백업하세요");
+      else toast("저장하지 못했습니다: "+((err&&err.message)||""));
+    }
+    return;
+  }
+  const a = document.createElement("a");    // 일반 브라우저
   a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click();
   setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  toast("파일이 저장되었습니다 ✅");
 }
 async function exportJSON(){
   toast("백업 생성 중…");
   const images = [];
   for(const [id,im] of state.imgCache) images.push({id, thumb:im.thumb, data: await blobToDataURL(im.blob)});
   const payload = {app:"trading-journal", version:1, exportedAt:new Date().toISOString(), entries:state.entries, images};
-  download("매매일지_백업_"+ymd(new Date())+".json", new Blob([JSON.stringify(payload)],{type:"application/json"}));
-  toast("백업 파일이 저장되었습니다");
+  await download("trading-journal-backup-"+ymd(new Date())+".json", new Blob([JSON.stringify(payload)],{type:"application/json"}));
 }
 async function importJSON(file){
   try{
@@ -1006,14 +1046,13 @@ async function importJSON(file){
     await loadAll(); render(); toast("불러오기 완료 ✅");
   }catch(err){ console.error(err); toast("불러오기에 실패했습니다"); }
 }
-function exportCSV(){
+async function exportCSV(){
   const head = ["날짜","시간","종목","방향","진입가","청산가","수량","비용","손익","수익률(%)","평점","태그","코멘트"];
   const q = v => '"'+String(v==null?"":v).replace(/"/g,'""')+'"';
   const rows = state.entries.map(e=>[e.date,e.time,e.symbol,e.side==="short"?"숏":"롱",e.entry,e.exit,e.qty,e.fee,
     e.pnl,e.pnlPct,e.rating,(e.tags||[]).join(" "),(e.comment||"").replace(/\n/g," ")].map(q).join(","));
-  download("매매일지_"+ymd(new Date())+".csv",
+  await download("trading-journal-"+ymd(new Date())+".csv",
     new Blob(["﻿"+head.map(q).join(",")+"\n"+rows.join("\n")],{type:"text/csv;charset=utf-8"}));
-  toast("CSV가 저장되었습니다");
 }
 async function addSample(){
   const base = new Date(); const mk=(off,o)=>Object.assign({
@@ -1174,6 +1213,9 @@ document.addEventListener("keydown", e=>{
 /* ---------------- boot ---------------- */
 (async function boot(){
   const t = localStorage.getItem("tj-theme"); if(t) document.documentElement.dataset.theme=t;
+  let embedded = true;
+  try{ embedded = (window.self!==window.top); }catch(e){}
+  if(embedded) hostDownloads().then(dl=>{ if(!dl) $("#embed-note").style.display="block"; });
   try{ await loadAll(); }
   catch(err){ console.error(err); toast("저장소를 열지 못했습니다 (시크릿 모드일 수 있어요)"); }
   render();
