@@ -71,7 +71,7 @@ window.TJ_CONFIG = {
 
 **Vercel (권장 · 짧은 주소)** — [`docs/DEPLOY-VERCEL.md`](../docs/DEPLOY-VERCEL.md)
 저장소를 Import 하고 **Root Directory 를 `trading-journal`** 로 지정하면
-`https://chuse.vercel.app` 같은 주소가 만들어집니다.
+`https://ch-trading.vercel.app` 같은 주소가 만들어집니다.
 
 **GitHub Pages** — 저장소 **Settings → Pages → Source: GitHub Actions**
 포함된 워크플로가 `trading-journal/` 폴더를 배포하고,

@@ -35,7 +35,7 @@ https://claude.ai/code/artifact/e8692531-469b-4346-8727-0e98d23d2438
 `trading-journal/index.html` 파일을 더블클릭 → 브라우저에서 바로 실행됩니다.
 
 ### 2. Vercel로 짧은 주소 공개 (권장)
-`https://chuse.vercel.app` 처럼 짧은 주소로 배포합니다. 빌드 없이 이 폴더만 올리면 됩니다.
+`https://ch-trading.vercel.app` 처럼 짧은 주소로 배포합니다. 빌드 없이 이 폴더만 올리면 됩니다.
 순서는 [`docs/DEPLOY-VERCEL.md`](../docs/DEPLOY-VERCEL.md) 참고 —
 핵심은 Vercel 프로젝트 생성 시 **Root Directory 를 `trading-journal` 로 지정**하는 것입니다.
 

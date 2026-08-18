@@ -1,13 +1,16 @@
 # 🔗 짧은 주소로 배포하기 (Vercel)
 
-목표 주소: **`https://chuse.vercel.app`**
-(이름이 이미 쓰이고 있으면 `chuse-journal`, `chuse-log` 처럼 바꾸면 됩니다)
+목표 주소: **`https://ch-trading.vercel.app`**
+
+> **언더스코어(`_`)는 쓸 수 없습니다.** `ch_trading.vercel.app` 같은 주소는 HTTPS 인증서
+> (Let's Encrypt)가 발급되지 않아 Vercel이 허용하지 않습니다. 하이픈(`-`)으로 대신합니다.
+> `ch-trading` 이름마저 선점돼 있으면 `chtrading`, `ch-trading-log` 등으로 바꾸면 됩니다.
 
 이 앱의 화면은 정적 파일 하나(`trading-journal/index.html`)라서 빌드 과정 없이 그대로 올라갑니다.
 데이터(로그인·일지·이미지)는 Supabase가 맡으므로, Vercel에는 **화면만** 올립니다.
 
 ```
-접속 주소   https://chuse.vercel.app        ← Vercel (정적 호스팅, 무료)
+접속 주소   https://ch-trading.vercel.app        ← Vercel (정적 호스팅, 무료)
 데이터      Supabase 무료 프로젝트           ← 로그인 · DB · 차트 이미지
 ```
 
@@ -25,14 +28,14 @@ https://vercel.com → **Continue with GitHub** (신용카드 불필요, Hobby �
 
    | 항목 | 값 |
    |---|---|
-   | **Project Name** | `chuse` ← 이 이름이 그대로 `chuse.vercel.app` 이 됩니다 |
+   | **Project Name** | `ch-trading` ← 이 이름이 그대로 `ch-trading.vercel.app` 이 됩니다 |
    | **Root Directory** | `trading-journal` ← **꼭 지정하세요** |
 
    > Root Directory를 지정하지 않으면 저장소 루트의 `requirements.txt`(Streamlit 앱용)를 보고
    > Python 프로젝트로 잘못 인식합니다. `trading-journal` 폴더만 올리면 정적 사이트로 처리됩니다.
    > Framework Preset은 **Other**(자동으로 잡힙니다), Build Command·Install Command는 비워 둡니다.
 
-4. **Deploy** → 30초쯤 뒤 `https://chuse.vercel.app` 완성
+4. **Deploy** → 30초쯤 뒤 `https://ch-trading.vercel.app` 완성
 
 ## 3. 배포할 브랜치 지정
 
@@ -61,8 +64,8 @@ https://vercel.com → **Continue with GitHub** (신용카드 불필요, Hobby �
 | 증상 | 해결 |
 |---|---|
 | 배포 로그에 `pip install` 이 보임 | Root Directory가 `trading-journal` 로 지정되지 않음 → Settings → General 에서 수정 후 Redeploy |
-| 주소가 `chuse-xxxx.vercel.app` | 프로젝트 이름이 다르게 잡힘 → Settings → General → Project Name 을 `chuse` 로 변경 |
-| `chuse` 이름을 쓸 수 없음 | 이미 선점된 이름 → `chuse-journal`, `chuse-log` 등으로 지정 |
+| 주소가 `ch-trading-xxxx.vercel.app` | 프로젝트 이름이 다르게 잡힘 → Settings → General → Project Name 을 `ch-trading` 로 변경 |
+| `ch-trading` 이름을 쓸 수 없음 | 이미 선점된 이름 → `ch-trading-log`, `chtrading` 등으로 지정 |
 | 접속은 되는데 로그인 화면이 안 나옴 | Supabase 연결 정보 없음 → 4번 단계 확인 (연결 전에는 브라우저 저장 모드로 동작) |
 | 수정했는데 화면이 그대로 | 브라우저 강력 새로고침(Ctrl/⌘+Shift+R). 캐시는 `vercel.json` 에서 이미 매 요청 재검증으로 설정해 두었습니다 |
 
