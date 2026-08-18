@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>매매일지 · Trading Journal</title>
+<script src="config.js"></script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%93%3C/text%3E%3C/svg%3E">
 <style>
 :root{
@@ -287,7 +288,7 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
     <h1>📓 매매일지</h1>
     <p>서버에 저장된 내 매매 기록에 로그인합니다.<br>어느 기기에서 접속해도 같은 일지가 보입니다.</p>
     <div class="field">
-      <label for="a-user">아이디</label>
+      <label for="a-user" id="a-user-label">아이디</label>
       <input id="a-user" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
     </div>
     <div class="field">
@@ -297,7 +298,11 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
     <div class="auth-err" id="auth-err"></div>
     <button class="btn primary" type="submit">로그인</button>
     <button class="btn" type="button" id="a-register" style="display:none">회원가입</button>
-    <div class="auth-alt"><button type="button" id="a-local">서버 없이 이 브라우저에만 저장하며 쓰기</button></div>
+    <div class="auth-alt">
+      <button type="button" id="a-local">이 브라우저에만 저장하며 쓰기</button>
+      <span style="color:var(--faint)"> · </span>
+      <button type="button" id="a-cfg">클라우드 연결 설정</button>
+    </div>
   </form>
 </div>
 
@@ -319,6 +324,7 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
   <div id="acct" style="padding:9px 12px;font-size:12px;color:var(--muted);line-height:1.5"></div>
   <button id="m-logout" style="display:none">🚪 로그아웃</button>
   <hr>
+  <button id="m-cloud">☁️ 클라우드 연결 설정</button>
   <button id="m-theme">🌗 라이트/다크 전환</button>
   <hr>
   <button id="m-export">⬇️ 백업 내보내기 (JSON)</button>
@@ -452,6 +458,30 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
   </form>
 </dialog>
 
+<dialog id="cfg-modal">
+  <form class="modal" method="dialog">
+    <div class="modal-head"><h3>☁️ 클라우드(Supabase) 연결</h3><div class="spacer"></div>
+      <button type="button" class="btn ghost icon" id="cfg-close">✕</button></div>
+    <div class="modal-body">
+      <p style="margin:0 0 16px;color:var(--muted);font-size:13px;line-height:1.7">
+        Supabase 프로젝트의 <b>Project URL</b> 과 <b>anon public key</b> 를 붙여넣으면,
+        일지와 차트 이미지가 무료 클라우드에 저장되어 어느 기기에서든 같은 기록을 볼 수 있습니다.<br>
+        <span style="color:var(--faint)">Supabase 대시보드 → Project Settings → API 에서 확인할 수 있습니다.</span>
+      </p>
+      <div class="field"><label for="cfg-url">Project URL</label>
+        <input id="cfg-url" placeholder="https://xxxxxxxx.supabase.co" spellcheck="false"></div>
+      <div class="field"><label for="cfg-key">anon public key</label>
+        <input id="cfg-key" placeholder="eyJhbGciOi..." spellcheck="false"></div>
+      <div class="auth-err" id="cfg-err"></div>
+    </div>
+    <div class="modal-foot">
+      <button type="button" class="btn ghost danger" id="cfg-clear" style="margin-right:auto">연결 해제</button>
+      <button type="button" class="btn" id="cfg-cancel">취소</button>
+      <button type="button" class="btn primary" id="cfg-save">저장하고 연결</button>
+    </div>
+  </form>
+</dialog>
+
 <div id="lightbox">
   <button class="lb-nav prev" id="lb-prev">‹</button>
   <img id="lb-img" alt="차트 이미지">
@@ -577,6 +607,8 @@ const LocalStore = {
     return url;
   },
   thumb(id){ const im = state.imgCache.get(id); return im ? (im.thumb || this.full(id)) : ""; },
+  async thumbURL(id){ return this.thumb(id); },
+  async fullURL(id){ return this.full(id); },
   pendingFor(entry){
     return (entry.images||[]).map(id=>state.imgCache.get(id)).filter(Boolean)
       .map(im=>({id:im.id, blob:im.blob, thumb:im.thumb, isNew:false}));
@@ -617,6 +649,8 @@ const ServerStore = {
   has(){ return true; },
   full(id){ return "/api/images/"+encodeURIComponent(id); },
   thumb(id){ return "/api/images/"+encodeURIComponent(id)+"/thumb"; },
+  async thumbURL(id){ return this.thumb(id); },
+  async fullURL(id){ return this.full(id); },
   pendingFor(entry){ return (entry.images||[]).map(id=>({id, thumb:this.thumb(id), isNew:false})); },
   async saveEntry(e, pending){
     const ids = [];
@@ -645,10 +679,221 @@ const ServerStore = {
   }
 };
 
+/* ---------------- Supabase(무료 클라우드) 저장 ---------------- */
+const BUCKET = "charts";
+
+const SB = {
+  url:null, key:null, token:null, refresh:null, uid:null, email:null,
+
+  loadConfig(){
+    let c = null;
+    if(window.TJ_CONFIG && window.TJ_CONFIG.supabaseUrl && window.TJ_CONFIG.supabaseAnonKey){
+      c = {url:window.TJ_CONFIG.supabaseUrl, key:window.TJ_CONFIG.supabaseAnonKey};
+    }else{
+      try{ c = JSON.parse(localStorage.getItem("tj-supabase")||"null"); }catch(e){}
+    }
+    if(c && c.url && c.key){ this.url = String(c.url).replace(/\/+$/,""); this.key = c.key; return true; }
+    return false;
+  },
+  saveConfig(url,key){
+    this.url = String(url).replace(/\/+$/,""); this.key = key;
+    localStorage.setItem("tj-supabase", JSON.stringify({url:this.url, key:this.key}));
+  },
+  clearConfig(){ localStorage.removeItem("tj-supabase"); this.clearSession(); this.url=this.key=null; },
+
+  restoreSession(){
+    try{
+      const s = JSON.parse(localStorage.getItem("tj-sb-session")||"null");
+      if(s && s.access_token){ this.token=s.access_token; this.refresh=s.refresh_token; this.uid=s.user_id; this.email=s.email; return true; }
+    }catch(e){}
+    return false;
+  },
+  setSession(j){
+    this.token = j.access_token || this.token;
+    this.refresh = j.refresh_token || this.refresh;
+    if(j.user){ this.uid = j.user.id; this.email = j.user.email; }
+    localStorage.setItem("tj-sb-session", JSON.stringify(
+      {access_token:this.token, refresh_token:this.refresh, user_id:this.uid, email:this.email}));
+  },
+  clearSession(){
+    this.token = this.refresh = this.uid = this.email = null;
+    localStorage.removeItem("tj-sb-session");
+    for(const [k,u] of state.urlCache){ URL.revokeObjectURL(u); }
+    state.urlCache.clear();
+  },
+
+  async authFetch(path, body){
+    const r = await fetch(this.url+path, {method:"POST",
+      headers:{apikey:this.key, "Content-Type":"application/json"}, body:JSON.stringify(body)});
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.msg || j.error_description || j.message || j.error || "요청에 실패했습니다");
+    return j;
+  },
+  async signIn(email, password){
+    const j = await this.authFetch("/auth/v1/token?grant_type=password", {email, password});
+    this.setSession(j); return j;
+  },
+  async signUp(email, password){
+    const j = await this.authFetch("/auth/v1/signup", {email, password});
+    if(!j.access_token) throw new Error("가입되었습니다. 메일함에서 확인 링크를 눌러주세요 (Supabase 설정에서 이메일 확인을 끄면 바로 쓸 수 있습니다)");
+    this.setSession(j); return j;
+  },
+  async signOut(){
+    try{ await fetch(this.url+"/auth/v1/logout", {method:"POST", headers:this.headers()}); }catch(e){}
+    this.clearSession();
+  },
+  async doRefresh(){
+    if(!this.refresh) return false;
+    try{
+      const j = await this.authFetch("/auth/v1/token?grant_type=refresh_token", {refresh_token:this.refresh});
+      this.setSession(j); return true;
+    }catch(e){ this.clearSession(); return false; }
+  },
+  headers(extra){
+    return Object.assign({apikey:this.key, Authorization:"Bearer "+this.token}, extra||{});
+  },
+  async fetch(path, opts, retried){
+    const o = Object.assign({}, opts||{});
+    o.headers = Object.assign(this.headers(), (opts&&opts.headers)||{});
+    const r = await fetch(this.url+path, o);
+    if(r.status===401 || r.status===403){
+      if(!retried && await this.doRefresh()) return this.fetch(path, opts, true);
+      this.clearSession(); showAuth();
+      throw new Error("다시 로그인해 주세요");
+    }
+    if(!r.ok){
+      let msg = "요청에 실패했습니다 ("+r.status+")";
+      try{ const j = await r.json(); msg = j.message || j.msg || j.error || j.hint || msg; }catch(e){}
+      throw new Error(msg);
+    }
+    return r;
+  },
+  objectPath(id, thumb){
+    return "/storage/v1/object/"+BUCKET+"/"+encodeURIComponent(this.uid)+"/"+
+           encodeURIComponent(id)+(thumb?"_thumb":"")+".jpg";
+  }
+};
+
+const toRow = e => ({
+  id:e.id, date:e.date, time:e.time||null, symbol:e.symbol, side:e.side||"long",
+  entry:e.entry, exit:e.exit, qty:e.qty, fee:e.fee, pnl:e.pnl, pnl_pct:e.pnlPct,
+  tags:e.tags||[], comment:e.comment||"", rating:e.rating||0, images:e.images||[],
+  created_at:e.createdAt||new Date().toISOString(), updated_at:new Date().toISOString()
+});
+const fromRow = r => ({
+  id:r.id, date:r.date, time:r.time||"", symbol:r.symbol, side:r.side||"long",
+  entry:r.entry, exit:r.exit, qty:r.qty, fee:r.fee, pnl:r.pnl, pnlPct:r.pnl_pct,
+  tags:r.tags||[], comment:r.comment||"", rating:r.rating||0, images:r.images||[],
+  createdAt:r.created_at, updatedAt:r.updated_at
+});
+
+const SupabaseStore = {
+  mode:"cloud",
+  async load(){
+    const r = await SB.fetch("/rest/v1/entries?select=*&order=date.asc,time.asc");
+    const rows = await r.json().catch(()=>[]);
+    return Array.isArray(rows) ? rows.map(fromRow) : [];
+  },
+  has(){ return true; },
+  async objURL(id, thumb){
+    const key = (thumb?"t:":"f:")+id;
+    if(state.urlCache.has(key)) return state.urlCache.get(key);
+    let r;
+    try{ r = await SB.fetch(SB.objectPath(id, thumb)); }
+    catch(err){
+      if(thumb) return this.objURL(id, false);   // 썸네일이 없으면 원본으로
+      throw err;
+    }
+    const url = URL.createObjectURL(await r.blob());
+    state.urlCache.set(key, url);
+    return url;
+  },
+  async thumbURL(id){ return this.objURL(id, true); },
+  async fullURL(id){ return this.objURL(id, false); },
+  pendingFor(entry){ return (entry.images||[]).map(id=>({id, isNew:false})); },
+  async putObject(path, blob, type){
+    await SB.fetch(path, {method:"POST", headers:{"Content-Type":type||"image/jpeg", "x-upsert":"true"}, body:blob});
+  },
+  async dropObjects(ids){
+    for(const id of (ids||[])){
+      for(const t of [false,true]){
+        try{ await SB.fetch(SB.objectPath(id,t), {method:"DELETE"}); }catch(e){}
+      }
+      state.urlCache.delete("t:"+id); state.urlCache.delete("f:"+id);
+    }
+  },
+  async saveEntry(e, pending, dropped){
+    const ids = [];
+    for(const p of (pending||[])){
+      if(!p.isNew){ ids.push(p.id); continue; }
+      await this.putObject(SB.objectPath(p.id,false), p.blob, p.blob.type);
+      if(p.thumb) await this.putObject(SB.objectPath(p.id,true), dataURLToBlob(p.thumb), "image/jpeg");
+      ids.push(p.id);
+    }
+    e.images = ids;
+    const r = await SB.fetch("/rest/v1/entries?on_conflict=id", {
+      method:"POST",
+      headers:{"Content-Type":"application/json", Prefer:"resolution=merge-duplicates,return=representation"},
+      body: JSON.stringify(toRow(e))
+    });
+    await this.dropObjects(dropped);
+    const rows = await r.json().catch(()=>[]);
+    return rows && rows[0] ? fromRow(rows[0]) : e;
+  },
+  async removeEntry(e){
+    await SB.fetch("/rest/v1/entries?id=eq."+encodeURIComponent(e.id), {method:"DELETE"});
+    await this.dropObjects(e.images||[]);
+  },
+  async wipe(){
+    const all = state.entries.slice();
+    await SB.fetch("/rest/v1/entries?id=not.is.null", {method:"DELETE"});
+    for(const e of all) await this.dropObjects(e.images||[]);
+  },
+  async exportBlob(){
+    const images = [];
+    for(const e of state.entries){
+      for(const id of (e.images||[])){
+        try{
+          const full = await (await SB.fetch(SB.objectPath(id,false))).blob();
+          let thumb = null;
+          try{ thumb = await blobToDataURL(await (await SB.fetch(SB.objectPath(id,true))).blob()); }catch(err){}
+          images.push({id, data: await blobToDataURL(full), thumb});
+        }catch(err){ console.error("이미지 백업 실패", id, err); }
+      }
+    }
+    const payload = {app:"trading-journal", version:1, exportedAt:new Date().toISOString(), entries:state.entries, images};
+    return new Blob([JSON.stringify(payload)],{type:"application/json"});
+  },
+  async importData(data){
+    for(const im of (data.images||[])){
+      if(!im.data) continue;
+      await this.putObject(SB.objectPath(im.id,false), dataURLToBlob(im.data), "image/jpeg");
+      if(im.thumb) await this.putObject(SB.objectPath(im.id,true), dataURLToBlob(im.thumb), "image/jpeg");
+    }
+    const rows = (data.entries||[]).map(toRow);
+    if(rows.length) await SB.fetch("/rest/v1/entries?on_conflict=id", {
+      method:"POST",
+      headers:{"Content-Type":"application/json", Prefer:"resolution=merge-duplicates"},
+      body: JSON.stringify(rows)
+    });
+  }
+};
+
 let Store = LocalStore;
 async function loadAll(){ state.entries = (await Store.load()).sort(cmpEntry); }
-const imgURL  = id => Store.full(id);
-const thumbOf = id => Store.thumb(id);
+const BLANK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='11'%3E%3C/svg%3E";
+
+/* 카드가 그려진 뒤 이미지 주소를 채워 넣는다 (드라이버마다 방식이 달라 비동기로 통일) */
+async function hydrateImages(){
+  const imgs = $$("#view img[data-img], #thumbs img[data-img]").filter(el=>!el.dataset.ready);
+  for(const el of imgs){
+    el.dataset.ready = "1";
+    try{
+      const url = await Store.thumbURL(el.dataset.img);
+      if(url) el.src = url;
+    }catch(err){ console.error(err); }
+  }
+}
 
 /* ---------------- filtering / aggregation ---------------- */
 function visible(){
@@ -694,6 +939,10 @@ function dayPnl(list){
 
 /* ---------------- rendering: shell ---------------- */
 function render(){
+  renderView();
+  hydrateImages();
+}
+function renderView(){
   $$("#tabs button").forEach(b=>b.classList.toggle("on", b.dataset.view===state.view));
   const v = state.view;
   const navHidden = (v==="stats") ? "none" : "";
@@ -738,7 +987,7 @@ function entryCard(e){
     ((e.tags||[]).length?'<div class="tags">'+e.tags.map(t=>'<span class="tag">#'+esc(t)+'</span>').join("")+'</div>':"")+
     (e.comment?'<div class="comment">'+esc(e.comment)+'</div>':"")+
     (shots.length?'<div class="shots">'+shots.map((id,i)=>
-        '<img loading="lazy" src="'+thumbOf(id)+'" data-entry="'+e.id+'" data-i="'+i+'" alt="차트">').join("")+'</div>':"")+
+        '<img loading="lazy" src="'+BLANK+'" data-img="'+id+'" data-entry="'+e.id+'" data-i="'+i+'" alt="차트">').join("")+'</div>':"")+
     '<div class="entry-foot">'+
       '<button class="edit" data-id="'+e.id+'">✏️ 수정</button>'+
       '<button class="dup" data-id="'+e.id+'">📄 복제</button>'+
@@ -1004,9 +1253,13 @@ async function addFiles(files){
   toast(imgs.length+"장 추가됨");
 }
 function renderThumbs(){
-  $("#thumbs").innerHTML = state.pending.map((p,i)=>
-    '<div class="thumb"><img src="'+(p.thumb||URL.createObjectURL(p.blob))+'" alt="">'+
-    '<button type="button" data-rm="'+i+'" title="제거">✕</button></div>').join("");
+  $("#thumbs").innerHTML = state.pending.map((p,i)=>{
+    const src = p.thumb ? p.thumb : (p.blob ? URL.createObjectURL(p.blob) : BLANK);
+    const lazy = (!p.thumb && !p.blob) ? ' data-img="'+p.id+'"' : "";
+    return '<div class="thumb"><img src="'+src+'"'+lazy+' alt="">'+
+      '<button type="button" data-rm="'+i+'" title="제거">✕</button></div>';
+  }).join("");
+  hydrateImages();
 }
 
 /* ---------------- modal / form ---------------- */
@@ -1108,8 +1361,14 @@ async function deleteEntry(id){
 
 /* ---------------- lightbox ---------------- */
 const lb = { ids:[], i:0 };
-function openLB(ids,i){ lb.ids=ids; lb.i=i; $("#lb-img").src=imgURL(ids[i]); $("#lightbox").classList.add("on"); }
-function moveLB(d){ if(!lb.ids.length) return; lb.i=(lb.i+d+lb.ids.length)%lb.ids.length; $("#lb-img").src=imgURL(lb.ids[lb.i]); }
+async function showLB(){
+  const id = lb.ids[lb.i]; if(!id) return;
+  $("#lb-img").src = BLANK;
+  try{ $("#lb-img").src = await Store.fullURL(id); }
+  catch(err){ console.error(err); toast("이미지를 불러오지 못했습니다"); }
+}
+function openLB(ids,i){ lb.ids=ids; lb.i=i; $("#lightbox").classList.add("on"); showLB(); }
+function moveLB(d){ if(!lb.ids.length) return; lb.i=(lb.i+d+lb.ids.length)%lb.ids.length; showLB(); }
 
 /* ---------------- backup ---------------- */
 function blobToDataURL(b){ return new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(b); }); }
@@ -1338,8 +1597,9 @@ function hideAuth(){ $("#auth").classList.remove("on"); }
 function authErr(msg){ $("#auth-err").textContent = msg || ""; }
 
 function updateAccountUI(){
-  if(Store.mode==="server" && Session.user){
-    $("#acct").innerHTML = '☁️ 서버에 저장 중 · <b style="color:var(--text)">'+esc(Session.user)+'</b><br>'+
+  if(Store.mode!=="local" && Session.user){
+    $("#acct").innerHTML = (Store.mode==="cloud" ? "☁️ 클라우드에 저장 중 · " : "🖥 서버에 저장 중 · ")+
+      '<b style="color:var(--text)">'+esc(Session.user)+'</b><br>'+
       '<span style="color:var(--faint)">어느 기기에서 접속해도 같은 기록이 보입니다</span>';
     $("#m-logout").style.display = "block";
   }else{
@@ -1349,13 +1609,28 @@ function updateAccountUI(){
   }
 }
 
+/* 로그인 화면을 모드에 맞게 */
+function setupAuthScreen(){
+  const cloud = (Store.mode==="cloud");
+  $("#a-user-label").textContent = cloud ? "이메일" : "아이디";
+  $("#a-user").type = cloud ? "email" : "text";
+  $("#a-user").autocomplete = cloud ? "email" : "username";
+  $("#a-register").style.display = (cloud || Session.registrationOpen) ? "block" : "none";
+  $("#a-cfg").style.display = cloud ? "inline" : "none";
+  $("#auth-form").querySelector("p").innerHTML = cloud
+    ? "Supabase 계정으로 로그인합니다.<br>처음이라면 <b>회원가입</b>으로 계정을 만들어 주세요."
+    : (Session.registrationOpen
+        ? "이 서버의 <b>첫 계정</b>을 만들어 주세요.<br>이후 어느 기기에서 접속해도 같은 일지가 보입니다."
+        : "서버에 저장된 내 매매 기록에 로그인합니다.<br>어느 기기에서 접속해도 같은 일지가 보입니다.");
+}
+
 async function startApp(){
   hideAuth();
   try{ await loadAll(); }
   catch(err){
     console.error(err);
-    if(Store.mode==="local") toast("저장소를 열지 못했습니다 (시크릿 모드일 수 있어요)");
-    else return;                       // 서버 모드에서 401 → 로그인 화면
+    if(Store.mode==="local"){ toast("저장소를 열지 못했습니다 (시크릿 모드일 수 있어요)"); }
+    else { toast(err.message || "기록을 불러오지 못했습니다"); return; }   // 401 → 로그인 화면
   }
   updateAccountUI();
   render();
@@ -1363,9 +1638,22 @@ async function startApp(){
 
 async function doAuth(kind){
   const username = $("#a-user").value.trim(), password = $("#a-pass").value;
-  if(!username || !password){ authErr("아이디와 비밀번호를 모두 입력하세요"); return; }
+  const cloud = (Store.mode==="cloud");
+  if(!username || !password){ authErr((cloud?"이메일":"아이디")+"와 비밀번호를 모두 입력하세요"); return; }
   if(kind==="register" && password.length<6){ authErr("비밀번호는 6자 이상으로 정해주세요"); return; }
   authErr("");
+
+  if(cloud){
+    try{
+      const j = kind==="register" ? await SB.signUp(username, password) : await SB.signIn(username, password);
+      Session.user = (j.user && j.user.email) || username;
+      $("#a-pass").value = "";
+      await startApp();
+      toast((kind==="register"?"가입 완료 — ":"")+"환영합니다, "+Session.user+" ☁️");
+    }catch(err){ console.error(err); authErr(err.message || "로그인하지 못했습니다"); }
+    return;
+  }
+
   try{
     const r = await fetch("/api/auth/"+kind, {
       method:"POST", credentials:"same-origin",
@@ -1390,14 +1678,47 @@ $("#auth-form").addEventListener("submit", e=>{ e.preventDefault(); doAuth("logi
 $("#a-register").onclick = ()=>doAuth("register");
 $("#a-local").onclick = ()=>{
   Store = LocalStore;
+  Session.user = null;
   startApp();
   toast("이 브라우저에만 저장하는 모드로 시작합니다");
 };
 $("#m-logout").onclick = async ()=>{
   $("#menu").classList.remove("on");
-  try{ await fetch("/api/auth/logout", {method:"POST", credentials:"same-origin"}); }catch(e){}
+  if(Store.mode==="cloud") await SB.signOut();
+  else { try{ await fetch("/api/auth/logout", {method:"POST", credentials:"same-origin"}); }catch(e){} }
   Session.user = null; state.entries = [];
-  render(); showAuth(); toast("로그아웃되었습니다");
+  render(); setupAuthScreen(); showAuth(); toast("로그아웃되었습니다");
+};
+
+/* ---------------- 클라우드 연결 설정 ---------------- */
+const cfgModal = $("#cfg-modal");
+function openCfg(){
+  $("#cfg-url").value = SB.url || "";
+  $("#cfg-key").value = SB.key || "";
+  $("#cfg-err").textContent = "";
+  $("#cfg-clear").style.display = SB.url ? "inline-block" : "none";
+  cfgModal.showModal();
+}
+$("#m-cloud").onclick = ()=>{ $("#menu").classList.remove("on"); openCfg(); };
+$("#a-cfg").onclick = openCfg;
+$("#cfg-cancel").onclick = ()=>cfgModal.close();
+$("#cfg-close").onclick = ()=>cfgModal.close();
+cfgModal.addEventListener("cancel", e=>{ e.preventDefault(); cfgModal.close(); });
+$("#cfg-save").onclick = async ()=>{
+  const url = $("#cfg-url").value.trim(), key = $("#cfg-key").value.trim();
+  if(!/^https?:\/\//.test(url) || !key){ $("#cfg-err").textContent = "URL과 키를 모두 정확히 입력해 주세요"; return; }
+  SB.saveConfig(url, key);
+  SB.clearSession();
+  Store = SupabaseStore; Session.user = null; state.entries = [];
+  cfgModal.close(); setupAuthScreen(); showAuth();
+  toast("클라우드에 연결했습니다 — 로그인해 주세요");
+};
+$("#cfg-clear").onclick = ()=>{
+  if(!confirm("클라우드 연결을 해제할까요? (클라우드에 저장된 기록은 지워지지 않습니다)")) return;
+  SB.clearConfig();
+  Store = LocalStore; Session.user = null; state.entries = [];
+  cfgModal.close();
+  startApp(); toast("연결을 해제하고 브라우저 저장 모드로 돌아갑니다");
 };
 
 /* ---------------- boot ---------------- */
@@ -1407,28 +1728,32 @@ $("#m-logout").onclick = async ()=>{
   try{ embedded = (window.self!==window.top); }catch(e){}
   if(embedded) hostDownloads().then(dl=>{ if(!dl) $("#embed-note").style.display="block"; });
 
+  const hasCloud = SB.loadConfig();
   let health = null;
-  if(location.protocol==="http:" || location.protocol==="https:"){
+  if(!hasCloud && (location.protocol==="http:" || location.protocol==="https:")){
     try{
       const r = await fetch("/api/health", {credentials:"same-origin"});
       if(r.ok) health = await r.json();
     }catch(e){ /* 정적 호스팅 — 브라우저 저장 모드 */ }
   }
 
-  if(health && health.mode==="server"){
+  if(health && health.mode==="server"){                 // ① 자체 FastAPI 서버
     Store = ServerStore;
     Session.registrationOpen = !!health.registrationOpen;
-    if(Session.registrationOpen){
-      $("#a-register").style.display = "block";
-      $("#auth-form").querySelector("p").innerHTML =
-        "이 서버의 <b>첫 계정</b>을 만들어 주세요.<br>이후 어느 기기에서 접속해도 같은 일지가 보입니다.";
-    }
+    setupAuthScreen();
     try{
       const me = await api("/api/me");
       Session.user = me.username;
       await startApp();
-    }catch(err){ showAuth(); }   // 미로그인 → 로그인 화면
-  }else{
+    }catch(err){ showAuth(); }
+  }else if(hasCloud){                                   // ② Supabase 클라우드
+    Store = SupabaseStore;
+    setupAuthScreen();
+    if(SB.restoreSession()){
+      Session.user = SB.email || "내 계정";
+      await startApp();
+    }else showAuth();
+  }else{                                                // ③ 이 브라우저에만 저장
     Store = LocalStore;
     await startApp();
   }

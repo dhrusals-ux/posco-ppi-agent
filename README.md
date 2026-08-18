@@ -162,12 +162,14 @@ posco-ppi-agent/
 
 두 가지 방식으로 쓸 수 있습니다.
 
-| 방식 | 저장 위치 | 실행 |
+| 방식 | 저장 위치 | 준비 |
 |---|---|---|
-| ☁️ **서버 모드** (여러 기기 동기화) | 서버 SQLite (`server/`, FastAPI) | `uvicorn server.main:app --host 0.0.0.0 --port 8000` |
+| ☁️ **클라우드 모드** (무료·여러 기기 동기화) | Supabase 무료 플랜 | [`supabase/README.md`](supabase/README.md) — 10분 설정 |
+| 🖥 **자체 서버 모드** | 내 서버의 SQLite (`server/`, FastAPI) | `uvicorn server.main:app --host 0.0.0.0 --port 8000` |
 | 💾 **브라우저 모드** (서버 불필요) | 접속한 브라우저(IndexedDB) | `trading-journal/index.html` 열기 · GitHub Pages |
 
-- 서버 설정·배포·API: [`server/README.md`](server/README.md)
+- 무료 클라우드 설정: [`supabase/README.md`](supabase/README.md)
+- 자체 서버 설정·배포·API: [`server/README.md`](server/README.md)
 - 앱 사용법·단축키: [`trading-journal/README.md`](trading-journal/README.md)
 - 정적 배포용 GitHub Pages 워크플로 포함 (`.github/workflows/pages.yml`)
 

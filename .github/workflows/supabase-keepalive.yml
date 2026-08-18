@@ -1,0 +1,29 @@
+# Supabase 무료 프로젝트는 7일간 요청이 없으면 일시정지됩니다.
+# 주 1회 가볍게 조회해 깨어 있게 유지합니다.
+#   저장소 Settings → Secrets and variables → Actions 에
+#   SUPABASE_URL, SUPABASE_ANON_KEY 를 등록하면 동작합니다.
+name: Keep Supabase awake
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"   # 매주 월요일 03:17 UTC
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase
+        env:
+          URL: ${{ secrets.SUPABASE_URL }}
+          KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "SUPABASE_URL / SUPABASE_ANON_KEY 시크릿이 없어 건너뜁니다."
+            exit 0
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "apikey: $KEY" "${URL%/}/rest/v1/entries?select=id&limit=1")
+          echo "HTTP $code"
+          # 401/403 은 RLS가 익명 요청을 막은 것으로, 프로젝트는 깨어났으므로 정상입니다.
+          case "$code" in 200|401|403) exit 0 ;; *) exit 1 ;; esac
