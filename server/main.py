@@ -82,6 +82,8 @@ def init_db() -> None:
                 pnl        REAL, pnl_pct REAL,
                 tags       TEXT, comment TEXT, lesson TEXT, rating INTEGER,
                 is_lesson  INTEGER NOT NULL DEFAULT 0,
+                is_market  INTEGER NOT NULL DEFAULT 0,
+                align_from TEXT DEFAULT '', align_to TEXT DEFAULT '',
                 images     TEXT,
                 created_at TEXT, updated_at TEXT
             );
@@ -107,6 +109,12 @@ def migrate_db() -> None:
             con.execute("ALTER TABLE entries ADD COLUMN lesson TEXT DEFAULT ''")
         if "is_lesson" not in cols:
             con.execute("ALTER TABLE entries ADD COLUMN is_lesson INTEGER NOT NULL DEFAULT 0")
+        if "is_market" not in cols:
+            con.execute("ALTER TABLE entries ADD COLUMN is_market INTEGER NOT NULL DEFAULT 0")
+        if "align_from" not in cols:
+            con.execute("ALTER TABLE entries ADD COLUMN align_from TEXT DEFAULT ''")
+        if "align_to" not in cols:
+            con.execute("ALTER TABLE entries ADD COLUMN align_to TEXT DEFAULT ''")
 
 
 init_db()
@@ -207,6 +215,9 @@ class Entry(BaseModel):
     comment: str = ""
     lesson: str = ""
     isLesson: bool = False
+    isMarket: bool = False
+    alignFrom: str = ""
+    alignTo: str = ""
     rating: int = 0
     images: list[str] = []
     createdAt: Optional[str] = None
@@ -220,6 +231,8 @@ def row_to_entry(r: sqlite3.Row) -> dict[str, Any]:
         "fee": r["fee"], "pnl": r["pnl"], "pnlPct": r["pnl_pct"],
         "tags": json.loads(r["tags"] or "[]"), "comment": r["comment"] or "",
         "lesson": r["lesson"] or "", "isLesson": bool(r["is_lesson"]),
+        "isMarket": bool(r["is_market"]),
+        "alignFrom": r["align_from"] or "", "alignTo": r["align_to"] or "",
         "rating": r["rating"] or 0, "images": json.loads(r["images"] or "[]"),
         "createdAt": r["created_at"], "updatedAt": r["updated_at"],
     }
@@ -317,19 +330,21 @@ def upsert_entry(entry_id: str, body: Entry, user: sqlite3.Row = Depends(current
                 con.execute("DELETE FROM images WHERE id=? AND user_id=?", (img_id, user["id"]))
         con.execute(
             """INSERT INTO entries
-               (id,user_id,date,time,symbol,side,entry,exit,qty,fee,pnl,pnl_pct,tags,comment,lesson,is_lesson,rating,images,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               (id,user_id,date,time,symbol,side,entry,exit,qty,fee,pnl,pnl_pct,tags,comment,lesson,is_lesson,is_market,align_from,align_to,rating,images,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET
                  date=excluded.date, time=excluded.time, symbol=excluded.symbol, side=excluded.side,
                  entry=excluded.entry, exit=excluded.exit, qty=excluded.qty, fee=excluded.fee,
                  pnl=excluded.pnl, pnl_pct=excluded.pnl_pct, tags=excluded.tags, comment=excluded.comment,
-                 lesson=excluded.lesson, is_lesson=excluded.is_lesson,
+                 lesson=excluded.lesson, is_lesson=excluded.is_lesson, is_market=excluded.is_market,
+                 align_from=excluded.align_from, align_to=excluded.align_to,
                  rating=excluded.rating, images=excluded.images, updated_at=excluded.updated_at""",
             (
                 body.id, user["id"], body.date, body.time, body.symbol, body.side,
                 body.entry, body.exit, body.qty, body.fee, body.pnl, body.pnlPct,
                 json.dumps(body.tags, ensure_ascii=False), body.comment, body.lesson,
-                1 if body.isLesson else 0, body.rating,
+                1 if body.isLesson else 0, 1 if body.isMarket else 0, body.alignFrom, body.alignTo,
+                body.rating,
                 json.dumps(images), (old["created_at"] if old else (body.createdAt or now())), now(),
             ),
         )
@@ -473,18 +488,20 @@ def import_all(payload: ImportPayload, user: sqlite3.Row = Depends(current_user)
             images = _owned_images(con, int(user["id"]), e.images)
             con.execute(
                 """INSERT INTO entries
-                   (id,user_id,date,time,symbol,side,entry,exit,qty,fee,pnl,pnl_pct,tags,comment,lesson,is_lesson,rating,images,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   (id,user_id,date,time,symbol,side,entry,exit,qty,fee,pnl,pnl_pct,tags,comment,lesson,is_lesson,is_market,align_from,align_to,rating,images,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(id) DO UPDATE SET
                      date=excluded.date, time=excluded.time, symbol=excluded.symbol, side=excluded.side,
                      entry=excluded.entry, exit=excluded.exit, qty=excluded.qty, fee=excluded.fee,
                      pnl=excluded.pnl, pnl_pct=excluded.pnl_pct, tags=excluded.tags, comment=excluded.comment,
-                     lesson=excluded.lesson, is_lesson=excluded.is_lesson,
+                     lesson=excluded.lesson, is_lesson=excluded.is_lesson, is_market=excluded.is_market,
+                     align_from=excluded.align_from, align_to=excluded.align_to, is_market=excluded.is_market,
+                 align_from=excluded.align_from, align_to=excluded.align_to,
                      rating=excluded.rating, images=excluded.images, updated_at=excluded.updated_at""",
                 (
                     e.id, user["id"], e.date, e.time, e.symbol, e.side, e.entry, e.exit, e.qty, e.fee,
                     e.pnl, e.pnlPct, json.dumps(e.tags, ensure_ascii=False), e.comment, e.lesson,
-                    1 if e.isLesson else 0, e.rating,
+                    1 if e.isLesson else 0, 1 if e.isMarket else 0, e.alignFrom, e.alignTo, e.rating,
                     json.dumps(images), e.createdAt or now(), now(),
                 ),
             )

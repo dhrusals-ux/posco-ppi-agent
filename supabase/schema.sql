@@ -21,6 +21,9 @@ create table if not exists public.entries (
   comment     text   not null default '',
   lesson      text   not null default '',      -- 🎯 최종 정리 시사점
   is_lesson   boolean not null default false,  -- 매매 없이 남긴 시사점 메모
+  is_market   boolean not null default false,  -- 장 시작 후 관찰 기록
+  align_from  text   not null default '',      -- 장 시작 전 이동평균 배열
+  align_to    text   not null default '',      -- 장 시작 후 이동평균 배열
   rating      int    not null default 0,
   images      text[] not null default '{}',
   created_at  timestamptz not null default now(),
@@ -41,6 +44,9 @@ create policy "entries are private" on public.entries
 -- 2-1) 예전 버전에서 올라온 경우 새 컬럼 추가 (처음 설치라면 아무 일도 안 함)
 alter table public.entries add column if not exists lesson    text    not null default '';
 alter table public.entries add column if not exists is_lesson boolean not null default false;
+alter table public.entries add column if not exists is_market  boolean not null default false;
+alter table public.entries add column if not exists align_from text    not null default '';
+alter table public.entries add column if not exists align_to   text    not null default '';
 
 -- 3) 차트 이미지 버킷 (비공개) ---------------------------------
 insert into storage.buckets (id, name, public)
