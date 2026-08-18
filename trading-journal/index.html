@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>매매일지 · Trading Journal</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%93%3C/text%3E%3C/svg%3E">
 <style>
 :root{
   --bg:#0f1218; --bg-soft:#161b24; --panel:#1b212c; --panel-2:#222a37;
@@ -228,6 +229,21 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
 .thumb button:hover{background:var(--loss)}
 .autonote{font-size:11.5px;color:var(--accent);margin-top:4px;min-height:14px}
 
+/* ---------- auth ---------- */
+#auth{position:fixed;inset:0;z-index:80;background:var(--bg);display:none;place-items:center;padding:20px}
+#auth.on{display:grid}
+.auth-card{
+  width:100%;max-width:380px;background:var(--panel);border:1px solid var(--line);
+  border-radius:18px;box-shadow:var(--shadow);padding:28px 26px
+}
+.auth-card h1{margin:0 0 4px;font-size:22px;letter-spacing:-.5px}
+.auth-card p{margin:0 0 20px;color:var(--muted);font-size:13px;line-height:1.6}
+.auth-card .btn{width:100%;padding:11px;margin-top:8px}
+.auth-err{color:var(--loss);font-size:12.5px;min-height:18px;margin:2px 0 4px}
+.auth-alt{margin-top:16px;text-align:center}
+.auth-alt button{color:var(--faint);font-size:12px;text-decoration:underline;text-underline-offset:3px}
+.auth-alt button:hover{color:var(--muted)}
+
 /* ---------- lightbox / toast / menu ---------- */
 #lightbox{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;z-index:90;place-items:center;padding:24px;cursor:zoom-out}
 #lightbox.on{display:grid}
@@ -266,6 +282,25 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
 </head>
 <body>
 
+<div id="auth">
+  <form class="auth-card" id="auth-form" autocomplete="on">
+    <h1>📓 매매일지</h1>
+    <p>서버에 저장된 내 매매 기록에 로그인합니다.<br>어느 기기에서 접속해도 같은 일지가 보입니다.</p>
+    <div class="field">
+      <label for="a-user">아이디</label>
+      <input id="a-user" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+    </div>
+    <div class="field">
+      <label for="a-pass">비밀번호</label>
+      <input id="a-pass" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <div class="auth-err" id="auth-err"></div>
+    <button class="btn primary" type="submit">로그인</button>
+    <button class="btn" type="button" id="a-register" style="display:none">회원가입</button>
+    <div class="auth-alt"><button type="button" id="a-local">서버 없이 이 브라우저에만 저장하며 쓰기</button></div>
+  </form>
+</div>
+
 <header class="topbar">
   <div class="brand">📓 매매일지 <small>TRADING JOURNAL</small></div>
   <div class="tabs" id="tabs">
@@ -281,6 +316,9 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
 </header>
 
 <div class="menu" id="menu">
+  <div id="acct" style="padding:9px 12px;font-size:12px;color:var(--muted);line-height:1.5"></div>
+  <button id="m-logout" style="display:none">🚪 로그아웃</button>
+  <hr>
   <button id="m-theme">🌗 라이트/다크 전환</button>
   <hr>
   <button id="m-export">⬇️ 백업 내보내기 (JSON)</button>
@@ -501,28 +539,116 @@ const state = {
   removed: []            // 편집 중 제거된 기존 이미지 id
 };
 
-async function loadAll(){
-  const [entries, images] = await Promise.all([DB.all("entries"), DB.all("images")]);
-  state.entries = entries.sort(cmpEntry);
-  state.imgCache.clear();
-  images.forEach(im => state.imgCache.set(im.id, im));
-}
 function cmpEntry(a,b){
   if(a.date!==b.date) return a.date<b.date?-1:1;
   return (a.time||"")<(b.time||"")?-1:1;
 }
-function imgURL(id){
-  if(state.urlCache.has(id)) return state.urlCache.get(id);
-  const im = state.imgCache.get(id);
-  if(!im) return "";
-  const url = URL.createObjectURL(im.blob);
-  state.urlCache.set(id,url);
-  return url;
+
+/* ---------------- 저장소: 서버 모드 / 브라우저 모드 ---------------- */
+const Session = { user:null, registrationOpen:false };
+
+async function api(path, opts){
+  const r = await fetch(path, Object.assign({credentials:"same-origin"}, opts||{}));
+  if(r.status===401){ Session.user=null; showAuth(); throw new Error("로그인이 필요합니다"); }
+  if(!r.ok){
+    let msg = "요청에 실패했습니다 ("+r.status+")";
+    try{ const j = await r.json(); if(j && typeof j.detail==="string") msg = j.detail; }catch(e){}
+    throw new Error(msg);
+  }
+  return r.status===204 ? null : r.json();
 }
-function thumbOf(id){
-  const im = state.imgCache.get(id);
-  return im ? (im.thumb || imgURL(id)) : "";
-}
+
+/* 브라우저(IndexedDB) 저장 — 서버가 없을 때 */
+const LocalStore = {
+  mode:"local",
+  async load(){
+    const [entries, images] = await Promise.all([DB.all("entries"), DB.all("images")]);
+    state.imgCache.clear();
+    images.forEach(im => state.imgCache.set(im.id, im));
+    return entries;
+  },
+  has(id){ return state.imgCache.has(id); },
+  full(id){
+    if(state.urlCache.has(id)) return state.urlCache.get(id);
+    const im = state.imgCache.get(id);
+    if(!im) return "";
+    const url = URL.createObjectURL(im.blob);
+    state.urlCache.set(id,url);
+    return url;
+  },
+  thumb(id){ const im = state.imgCache.get(id); return im ? (im.thumb || this.full(id)) : ""; },
+  pendingFor(entry){
+    return (entry.images||[]).map(id=>state.imgCache.get(id)).filter(Boolean)
+      .map(im=>({id:im.id, blob:im.blob, thumb:im.thumb, isNew:false}));
+  },
+  async saveEntry(e, pending, dropped){
+    for(const p of (pending||[]).filter(p=>p.isNew)){
+      await DB.put("images",{id:p.id, blob:p.blob, thumb:p.thumb, w:p.w, h:p.h});
+      state.imgCache.set(p.id,{id:p.id, blob:p.blob, thumb:p.thumb});
+    }
+    for(const id of (dropped||[])){ await DB.del("images", id); state.imgCache.delete(id); }
+    await DB.put("entries", e);
+    return e;
+  },
+  async removeEntry(e){
+    for(const id of (e.images||[])){ await DB.del("images", id); state.imgCache.delete(id); }
+    await DB.del("entries", e.id);
+  },
+  async wipe(){ await DB.clear("entries"); await DB.clear("images"); },
+  async exportBlob(){
+    const images = [];
+    for(const [id,im] of state.imgCache) images.push({id, thumb:im.thumb, data: await blobToDataURL(im.blob)});
+    const payload = {app:"trading-journal", version:1, exportedAt:new Date().toISOString(), entries:state.entries, images};
+    return new Blob([JSON.stringify(payload)],{type:"application/json"});
+  },
+  async importData(data){
+    for(const im of (data.images||[])){
+      const blob = im.data ? dataURLToBlob(im.data) : null;
+      if(blob) await DB.put("images",{id:im.id, blob, thumb:im.thumb});
+    }
+    for(const e of (data.entries||[])) await DB.put("entries", e);
+  }
+};
+
+/* 서버 저장 — 계정으로 로그인해 어느 기기에서나 같은 기록 */
+const ServerStore = {
+  mode:"server",
+  async load(){ return api("/api/entries"); },
+  has(){ return true; },
+  full(id){ return "/api/images/"+encodeURIComponent(id); },
+  thumb(id){ return "/api/images/"+encodeURIComponent(id)+"/thumb"; },
+  pendingFor(entry){ return (entry.images||[]).map(id=>({id, thumb:this.thumb(id), isNew:false})); },
+  async saveEntry(e, pending){
+    const ids = [];
+    for(const p of (pending||[])){
+      if(!p.isNew){ ids.push(p.id); continue; }
+      const fd = new FormData();
+      fd.append("file", p.blob, "chart.jpg");
+      if(p.thumb) fd.append("thumb", dataURLToBlob(p.thumb), "thumb.jpg");
+      const up = await api("/api/images", {method:"POST", body:fd});
+      ids.push(up.id);
+    }
+    e.images = ids;
+    return api("/api/entries/"+encodeURIComponent(e.id),
+      {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(e)});
+  },
+  async removeEntry(e){ await api("/api/entries/"+encodeURIComponent(e.id), {method:"DELETE"}); },
+  async wipe(){ await api("/api/entries", {method:"DELETE"}); },
+  async exportBlob(){
+    const r = await fetch("/api/export", {credentials:"same-origin"});
+    if(!r.ok) throw new Error("백업을 만들지 못했습니다");
+    return r.blob();
+  },
+  async importData(data){
+    await api("/api/import", {method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({entries:data.entries||[], images:data.images||[]})});
+  }
+};
+
+let Store = LocalStore;
+async function loadAll(){ state.entries = (await Store.load()).sort(cmpEntry); }
+const imgURL  = id => Store.full(id);
+const thumbOf = id => Store.thumb(id);
 
 /* ---------------- filtering / aggregation ---------------- */
 function visible(){
@@ -589,7 +715,7 @@ const emptyBox = (t,s)=> '<div class="empty"><b>'+t+'</b>'+(s||"")+'</div>';
 /* ---------------- entry card ---------------- */
 function entryCard(e){
   const k = e.pnl==null?"flat":(e.pnl>0?"win":(e.pnl<0?"loss":"flat"));
-  const shots = (e.images||[]).filter(id=>state.imgCache.has(id));
+  const shots = (e.images||[]).filter(id=>Store.has(id));
   const price = [];
   if(e.entry!=null) price.push('진입 <b>'+e.entry.toLocaleString("ko-KR")+'</b>');
   if(e.exit!=null)  price.push('청산 <b>'+e.exit.toLocaleString("ko-KR")+'</b>');
@@ -924,10 +1050,7 @@ function openModal(entry, presetDate){
   $("#f-comment").value = entry ? (entry.comment||"") : "";
   setSide(entry ? (entry.side||"long") : "long");
   setRating(entry ? (entry.rating||0) : 0);
-  if(entry) (entry.images||[]).forEach(id=>{
-    const im = state.imgCache.get(id);
-    if(im) state.pending.push({id:im.id, blob:im.blob, thumb:im.thumb, isNew:false});
-  });
+  if(entry) state.pending = Store.pendingFor(entry);
   renderThumbs(); calcAuto();
   modal.showModal();
   setTimeout(()=>$("#f-symbol").focus(),50);
@@ -943,12 +1066,6 @@ async function saveEntry(){
   const keptIds = state.pending.map(p=>p.id);
   const gone = prev ? (prev.images||[]).filter(id=>!keptIds.includes(id)) : [];
 
-  for(const p of state.pending.filter(p=>p.isNew)){
-    await DB.put("images",{id:p.id, blob:p.blob, thumb:p.thumb, w:p.w, h:p.h});
-    state.imgCache.set(p.id,{id:p.id, blob:p.blob, thumb:p.thumb});
-  }
-  for(const id of gone){ await DB.del("images", id); state.imgCache.delete(id); }
-
   const e = {
     id: prev ? prev.id : uid(),
     date, time: $("#f-time").value || "",
@@ -963,18 +1080,27 @@ async function saveEntry(){
     createdAt: prev ? prev.createdAt : new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
-  await DB.put("entries", e);
-  state.entries = state.entries.filter(x=>x.id!==e.id).concat([e]).sort(cmpEntry);
-  closeModal();
-  if(state.view==="day") state.cursor = parseYmd(date);
-  render();
-  toast(prev ? "수정되었습니다" : "일지가 저장되었습니다 ✅");
+  const btn = $("#btn-save");
+  btn.disabled = true; btn.textContent = "저장 중…";
+  try{
+    const saved = (await Store.saveEntry(e, state.pending, gone)) || e;
+    state.entries = state.entries.filter(x=>x.id!==saved.id).concat([saved]).sort(cmpEntry);
+    closeModal();
+    if(state.view==="day") state.cursor = parseYmd(date);
+    render();
+    toast(prev ? "수정되었습니다" : "일지가 저장되었습니다 ✅");
+  }catch(err){
+    console.error(err);
+    toast("저장하지 못했습니다: "+err.message);
+  }finally{
+    btn.disabled = false; btn.textContent = "저장";
+  }
 }
 async function deleteEntry(id){
   const e = state.entries.find(x=>x.id===id); if(!e) return;
   if(!confirm("‘"+(e.symbol||"")+"’ 일지를 삭제할까요? 되돌릴 수 없습니다.")) return;
-  for(const iid of (e.images||[])){ await DB.del("images", iid); state.imgCache.delete(iid); }
-  await DB.del("entries", id);
+  try{ await Store.removeEntry(e); }
+  catch(err){ console.error(err); toast("삭제하지 못했습니다: "+err.message); return; }
   state.entries = state.entries.filter(x=>x.id!==id);
   if(modal.open) closeModal();
   render(); toast("삭제되었습니다");
@@ -1028,21 +1154,17 @@ async function download(name, blob){
 }
 async function exportJSON(){
   toast("백업 생성 중…");
-  const images = [];
-  for(const [id,im] of state.imgCache) images.push({id, thumb:im.thumb, data: await blobToDataURL(im.blob)});
-  const payload = {app:"trading-journal", version:1, exportedAt:new Date().toISOString(), entries:state.entries, images};
-  await download("trading-journal-backup-"+ymd(new Date())+".json", new Blob([JSON.stringify(payload)],{type:"application/json"}));
+  try{
+    const blob = await Store.exportBlob();
+    await download("trading-journal-backup-"+ymd(new Date())+".json", blob);
+  }catch(err){ console.error(err); toast("백업하지 못했습니다: "+err.message); }
 }
 async function importJSON(file){
   try{
     const data = JSON.parse(await file.text());
     if(!data.entries) throw new Error("형식 오류");
     if(!confirm("일지 "+data.entries.length+"건을 불러옵니다. 같은 ID는 덮어씁니다. 계속할까요?")) return;
-    for(const im of (data.images||[])){
-      const blob = im.data ? dataURLToBlob(im.data) : null;
-      if(blob) await DB.put("images",{id:im.id, blob, thumb:im.thumb});
-    }
-    for(const e of data.entries) await DB.put("entries", e);
+    await Store.importData(data);
     await loadAll(); render(); toast("불러오기 완료 ✅");
   }catch(err){ console.error(err); toast("불러오기에 실패했습니다"); }
 }
@@ -1072,7 +1194,7 @@ async function addSample(){
     mk(7,{symbol:"카카오", entry:38500, exit:39900, qty:80, fee:900, pnl:111100, pnlPct:3.64, rating:4,
         tags:["돌파매매"], comment:"박스권 상단 돌파. 계획한 목표가에서 전량 청산."})
   ];
-  for(const e of s) await DB.put("entries", e);
+  for(const e of s) await Store.saveEntry(e, []);
   await loadAll(); render(); toast("샘플 5건이 추가되었습니다");
 }
 
@@ -1101,7 +1223,7 @@ $("#view").addEventListener("click", e=>{
   const img = e.target.closest(".shots img");
   if(img){
     const en = state.entries.find(x=>x.id===img.dataset.entry);
-    if(en) openLB((en.images||[]).filter(id=>state.imgCache.has(id)), +img.dataset.i);
+    if(en) openLB((en.images||[]).filter(id=>Store.has(id)), +img.dataset.i);
     return;
   }
   const btn = e.target.closest(".entry-foot button");
@@ -1185,7 +1307,7 @@ $("#m-wipe").onclick = async ()=>{
   $("#menu").classList.remove("on");
   if(!confirm("모든 일지와 이미지를 삭제합니다. 되돌릴 수 없습니다. 계속할까요?")) return;
   if(!confirm("정말 전체 삭제할까요? 백업을 먼저 내보내는 것을 권장합니다.")) return;
-  await DB.clear("entries"); await DB.clear("images");
+  try{ await Store.wipe(); }catch(err){ toast("삭제하지 못했습니다: "+err.message); return; }
   await loadAll(); render(); toast("전체 삭제되었습니다");
 };
 
@@ -1210,15 +1332,106 @@ document.addEventListener("keydown", e=>{
   }
 });
 
+/* ---------------- 계정 / 로그인 ---------------- */
+function showAuth(){ $("#auth").classList.add("on"); setTimeout(()=>$("#a-user").focus(),60); }
+function hideAuth(){ $("#auth").classList.remove("on"); }
+function authErr(msg){ $("#auth-err").textContent = msg || ""; }
+
+function updateAccountUI(){
+  if(Store.mode==="server" && Session.user){
+    $("#acct").innerHTML = '☁️ 서버에 저장 중 · <b style="color:var(--text)">'+esc(Session.user)+'</b><br>'+
+      '<span style="color:var(--faint)">어느 기기에서 접속해도 같은 기록이 보입니다</span>';
+    $("#m-logout").style.display = "block";
+  }else{
+    $("#acct").innerHTML = '💾 이 브라우저에만 저장 중<br>'+
+      '<span style="color:var(--faint)">다른 기기와 공유되지 않습니다 — 백업을 남겨두세요</span>';
+    $("#m-logout").style.display = "none";
+  }
+}
+
+async function startApp(){
+  hideAuth();
+  try{ await loadAll(); }
+  catch(err){
+    console.error(err);
+    if(Store.mode==="local") toast("저장소를 열지 못했습니다 (시크릿 모드일 수 있어요)");
+    else return;                       // 서버 모드에서 401 → 로그인 화면
+  }
+  updateAccountUI();
+  render();
+}
+
+async function doAuth(kind){
+  const username = $("#a-user").value.trim(), password = $("#a-pass").value;
+  if(!username || !password){ authErr("아이디와 비밀번호를 모두 입력하세요"); return; }
+  if(kind==="register" && password.length<6){ authErr("비밀번호는 6자 이상으로 정해주세요"); return; }
+  authErr("");
+  try{
+    const r = await fetch("/api/auth/"+kind, {
+      method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({username, password})
+    });
+    if(!r.ok){
+      let msg = kind==="login" ? "로그인하지 못했습니다" : "가입하지 못했습니다";
+      try{ const j = await r.json(); if(j && typeof j.detail==="string") msg = j.detail; }catch(e){}
+      authErr(msg); return;
+    }
+    const me = await r.json();
+    Session.user = me.username;
+    $("#a-pass").value = "";
+    Store = ServerStore;
+    await startApp();
+    toast((kind==="register"?"가입 완료 — ":"")+"환영합니다, "+me.username+"님 ☁️");
+  }catch(err){ console.error(err); authErr("서버에 연결할 수 없습니다"); }
+}
+
+$("#auth-form").addEventListener("submit", e=>{ e.preventDefault(); doAuth("login"); });
+$("#a-register").onclick = ()=>doAuth("register");
+$("#a-local").onclick = ()=>{
+  Store = LocalStore;
+  startApp();
+  toast("이 브라우저에만 저장하는 모드로 시작합니다");
+};
+$("#m-logout").onclick = async ()=>{
+  $("#menu").classList.remove("on");
+  try{ await fetch("/api/auth/logout", {method:"POST", credentials:"same-origin"}); }catch(e){}
+  Session.user = null; state.entries = [];
+  render(); showAuth(); toast("로그아웃되었습니다");
+};
+
 /* ---------------- boot ---------------- */
 (async function boot(){
   const t = localStorage.getItem("tj-theme"); if(t) document.documentElement.dataset.theme=t;
   let embedded = true;
   try{ embedded = (window.self!==window.top); }catch(e){}
   if(embedded) hostDownloads().then(dl=>{ if(!dl) $("#embed-note").style.display="block"; });
-  try{ await loadAll(); }
-  catch(err){ console.error(err); toast("저장소를 열지 못했습니다 (시크릿 모드일 수 있어요)"); }
-  render();
+
+  let health = null;
+  if(location.protocol==="http:" || location.protocol==="https:"){
+    try{
+      const r = await fetch("/api/health", {credentials:"same-origin"});
+      if(r.ok) health = await r.json();
+    }catch(e){ /* 정적 호스팅 — 브라우저 저장 모드 */ }
+  }
+
+  if(health && health.mode==="server"){
+    Store = ServerStore;
+    Session.registrationOpen = !!health.registrationOpen;
+    if(Session.registrationOpen){
+      $("#a-register").style.display = "block";
+      $("#auth-form").querySelector("p").innerHTML =
+        "이 서버의 <b>첫 계정</b>을 만들어 주세요.<br>이후 어느 기기에서 접속해도 같은 일지가 보입니다.";
+    }
+    try{
+      const me = await api("/api/me");
+      Session.user = me.username;
+      await startApp();
+    }catch(err){ showAuth(); }   // 미로그인 → 로그인 화면
+  }else{
+    Store = LocalStore;
+    await startApp();
+  }
 })();
 })();
 </script>

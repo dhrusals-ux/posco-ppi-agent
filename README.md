@@ -160,9 +160,16 @@ posco-ppi-agent/
 
 이 저장소에는 PPI 에이전트와 별개로, **차트 이미지 + 코멘트로 매매를 복기하고 일별·주별·월간 성과를 관리하는 정적 웹앱**이 함께 들어 있습니다.
 
-- 실행: `trading-journal/index.html` 을 브라우저로 열기 (설치·서버 불필요)
-- 공개: GitHub Pages 배포 워크플로 포함 (`.github/workflows/pages.yml`)
-- 자세한 사용법: [`trading-journal/README.md`](trading-journal/README.md)
+두 가지 방식으로 쓸 수 있습니다.
+
+| 방식 | 저장 위치 | 실행 |
+|---|---|---|
+| ☁️ **서버 모드** (여러 기기 동기화) | 서버 SQLite (`server/`, FastAPI) | `uvicorn server.main:app --host 0.0.0.0 --port 8000` |
+| 💾 **브라우저 모드** (서버 불필요) | 접속한 브라우저(IndexedDB) | `trading-journal/index.html` 열기 · GitHub Pages |
+
+- 서버 설정·배포·API: [`server/README.md`](server/README.md)
+- 앱 사용법·단축키: [`trading-journal/README.md`](trading-journal/README.md)
+- 정적 배포용 GitHub Pages 워크플로 포함 (`.github/workflows/pages.yml`)
 
 ---
 

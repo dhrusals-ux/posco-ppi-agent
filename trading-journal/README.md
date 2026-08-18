@@ -62,7 +62,24 @@ python -m http.server 8000
 
 ---
 
-## 💾 데이터 저장 방식 (꼭 읽어주세요)
+## 💾 데이터 저장 방식
+
+이 앱은 **두 가지 모드**로 동작하며, 접속한 주소에 서버가 있는지에 따라 자동으로 정해집니다.
+
+### ☁️ 서버 모드 — 여러 기기에서 같은 기록 (권장)
+`server/` 의 FastAPI 서버를 띄우고 그 주소로 접속하면 자동으로 서버 모드가 됩니다.
+아이디/비밀번호로 로그인하며, 일지와 차트 이미지가 서버 DB(SQLite)에 저장되어
+PC·휴대폰 어디서 접속해도 동일한 기록이 보입니다. 설정과 배포 방법은
+[`server/README.md`](../server/README.md) 참고.
+
+```bash
+pip install -r server/requirements.txt
+export TJ_SECRET="$(python -c 'import secrets;print(secrets.token_hex(32))')"
+uvicorn server.main:app --host 0.0.0.0 --port 8000   # → http://localhost:8000
+```
+
+### 💾 브라우저 저장 모드 — 서버 없이 혼자 쓰기
+서버 없이 파일을 직접 열거나 GitHub Pages 같은 정적 호스팅으로 접속하면 이 모드로 동작합니다.
 
 - 모든 일지와 이미지는 **브라우저의 IndexedDB(내 PC)** 에만 저장됩니다. 서버로 전송되지 않습니다.
 - 따라서 **브라우저 데이터를 지우거나, 다른 기기·다른 브라우저로 가면 기록이 보이지 않습니다.**
