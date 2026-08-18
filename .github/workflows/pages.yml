@@ -1,0 +1,35 @@
+# 매매일지(trading-journal) 정적 사이트를 GitHub Pages로 배포합니다.
+# 사용법: Settings → Pages → Source 를 "GitHub Actions" 로 변경하세요.
+name: Deploy trading journal to Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "trading-journal/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: trading-journal
+      - id: deployment
+        uses: actions/deploy-pages@v4

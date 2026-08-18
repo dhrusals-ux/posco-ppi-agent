@@ -156,6 +156,16 @@ posco-ppi-agent/
 
 ---
 
+## 📓 부록: 매매일지 웹앱 (`trading-journal/`)
+
+이 저장소에는 PPI 에이전트와 별개로, **차트 이미지 + 코멘트로 매매를 복기하고 일별·주별·월간 성과를 관리하는 정적 웹앱**이 함께 들어 있습니다.
+
+- 실행: `trading-journal/index.html` 을 브라우저로 열기 (설치·서버 불필요)
+- 공개: GitHub Pages 배포 워크플로 포함 (`.github/workflows/pages.yml`)
+- 자세한 사용법: [`trading-journal/README.md`](trading-journal/README.md)
+
+---
+
 ## 📄 라이선스
 
 MIT License (교육용)
