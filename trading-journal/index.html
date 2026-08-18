@@ -126,12 +126,23 @@ main{max-width:1180px;margin:0 auto;padding:18px 18px 80px}
 .stars{color:var(--warn);letter-spacing:1px;font-size:12px}
 .comment{padding:0 15px 12px;white-space:pre-wrap;word-break:break-word;color:var(--text);font-size:13.5px}
 .comment:empty{display:none}
-.shots{display:flex;gap:8px;flex-wrap:wrap;padding:0 15px 12px}
+.shots{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:10px;padding:0 15px 14px}
 .shots img{
-  height:120px;max-width:230px;object-fit:cover;border-radius:var(--radius-sm);
-  border:1px solid var(--line);cursor:zoom-in;background:var(--panel-2);transition:transform .12s
+  width:auto;max-width:100%;height:auto;max-height:640px;object-fit:contain;object-position:left top;
+  border-radius:var(--radius-sm);border:1px solid var(--line);cursor:zoom-in;
+  background:var(--panel-2);transition:border-color .12s
 }
-.shots img:hover{transform:scale(1.02);border-color:var(--accent)}
+.shots img:hover{border-color:var(--accent)}
+.shots img[data-loading]{min-height:180px}
+/* 작게 보기 */
+body.img-sm .shots{display:flex;gap:8px;flex-wrap:wrap}
+body.img-sm .shots img{
+  width:auto;height:110px;max-width:200px;max-height:none;object-fit:cover;object-position:center
+}
+@media(max-width:720px){
+  .shots{grid-template-columns:1fr}
+  .shots img{max-height:none}
+}
 .entry-foot{display:flex;gap:6px;justify-content:flex-end;padding:0 12px 11px}
 .entry-foot button{font-size:12px;padding:5px 10px;border-radius:8px;color:var(--muted);border:1px solid transparent}
 .entry-foot button:hover{border-color:var(--line);color:var(--text)}
@@ -411,6 +422,7 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
   <button id="m-logout" style="display:none">🚪 로그아웃</button>
   <hr>
   <button id="m-cloud">☁️ 클라우드 연결 설정</button>
+  <button id="m-imgsize">🖼 차트 이미지 작게 보기</button>
   <button id="m-theme">🌗 라이트/다크 전환</button>
   <hr>
   <button id="m-export">⬇️ 백업 내보내기 (JSON)</button>
@@ -702,6 +714,7 @@ const state = {
   editing: null,
   modalMode: "trade",       // trade | market
   mxFilter: null,           // "역배열>정배열" 형태의 전환 필터
+  bigImages: localStorage.getItem("tj-imgsize") !== "small",
   pending: [],           // 편집 중인 이미지 [{id,thumb,blob,isNew}]
   removed: []            // 편집 중 제거된 기존 이미지 id
 };
@@ -1031,15 +1044,29 @@ async function loadAll(){ state.entries = (await Store.load()).sort(cmpEntry); }
 const BLANK = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='11'%3E%3C/svg%3E";
 
 /* 카드가 그려진 뒤 이미지 주소를 채워 넣는다 (드라이버마다 방식이 달라 비동기로 통일) */
-async function hydrateImages(){
+let imgObserver = null;
+async function loadImg(el){
+  if(el.dataset.ready) return;
+  el.dataset.ready = "1";
+  try{
+    const id = el.dataset.img;
+    const url = el.dataset.thumb==="1" ? await Store.thumbURL(id) : await Store.fullURL(id);
+    if(url) el.src = url;
+  }catch(err){ console.error(err); }
+  finally{ el.removeAttribute("data-loading"); }
+}
+function hydrateImages(){
   const imgs = $$("#view img[data-img], #thumbs img[data-img]").filter(el=>!el.dataset.ready);
-  for(const el of imgs){
-    el.dataset.ready = "1";
-    try{
-      const url = await Store.thumbURL(el.dataset.img);
-      if(url) el.src = url;
-    }catch(err){ console.error(err); }
+  if(!imgs.length) return;
+  if(!("IntersectionObserver" in window)){ imgs.forEach(loadImg); return; }
+  if(!imgObserver){
+    imgObserver = new IntersectionObserver(entries=>{
+      entries.forEach(en=>{
+        if(en.isIntersecting){ imgObserver.unobserve(en.target); loadImg(en.target); }
+      });
+    }, {rootMargin:"600px 0px"});
   }
+  imgs.forEach(el=>imgObserver.observe(el));
 }
 
 /* ---------------- filtering / aggregation ---------------- */
@@ -1163,7 +1190,8 @@ function entryCard(e){
     (e.comment?'<div class="comment">'+esc(e.comment)+'</div>':"")+
     (e.lesson?'<div class="lesson"><span class="k">🎯 최종 정리 시사점</span>'+esc(e.lesson)+'</div>':"")+
     (shots.length?'<div class="shots">'+shots.map((id,i)=>
-        '<img loading="lazy" src="'+BLANK+'" data-img="'+id+'" data-entry="'+e.id+'" data-i="'+i+'" alt="차트">').join("")+'</div>':"")+
+        '<img loading="lazy" data-loading src="'+BLANK+'" data-img="'+id+'"'+(state.bigImages?"":' data-thumb="1"')+
+        ' data-entry="'+e.id+'" data-i="'+i+'" alt="차트 이미지">').join("")+'</div>':"")+
     '<div class="entry-foot">'+
       '<button class="edit" data-id="'+e.id+'">✏️ 수정</button>'+
       '<button class="dup" data-id="'+e.id+'">📄 복제</button>'+
@@ -1409,7 +1437,8 @@ function obsCard(e){
     (e.comment?'<div class="note">'+esc(e.comment)+'</div>':"")+
     (e.lesson?'<div class="lesson" style="margin:10px 0 0"><span class="k">🎯 최종 정리 시사점</span>'+esc(e.lesson)+'</div>':"")+
     (shots.length?'<div class="shots">'+shots.map((id,i)=>
-        '<img loading="lazy" src="'+BLANK+'" data-img="'+id+'" data-entry="'+e.id+'" data-i="'+i+'" alt="차트">').join("")+'</div>':"")+
+        '<img loading="lazy" data-loading src="'+BLANK+'" data-img="'+id+'"'+(state.bigImages?"":' data-thumb="1"')+
+        ' data-entry="'+e.id+'" data-i="'+i+'" alt="차트 이미지">').join("")+'</div>':"")+
   '</div>';
 }
 
@@ -1608,7 +1637,7 @@ async function addFiles(files){
 function renderThumbs(){
   $("#thumbs").innerHTML = state.pending.map((p,i)=>{
     const src = p.thumb ? p.thumb : (p.blob ? URL.createObjectURL(p.blob) : BLANK);
-    const lazy = (!p.thumb && !p.blob) ? ' data-img="'+p.id+'"' : "";
+    const lazy = (!p.thumb && !p.blob) ? ' data-img="'+p.id+'" data-thumb="1"' : "";
     return '<div class="thumb"><img src="'+src+'"'+lazy+' alt="">'+
       '<button type="button" data-rm="'+i+'" title="제거">✕</button></div>';
   }).join("");
@@ -2036,6 +2065,18 @@ $("#lb-img").onclick = ()=>moveLB(1);
 $("#btn-menu").onclick = e=>{ e.stopPropagation(); $("#menu").classList.toggle("on"); };
 document.addEventListener("click", ()=>$("#menu").classList.remove("on"));
 $("#menu").addEventListener("click", e=>e.stopPropagation());
+function applyImageSize(){
+  document.body.classList.toggle("img-sm", !state.bigImages);
+  $("#m-imgsize").textContent = state.bigImages ? "🖼 차트 이미지 작게 보기" : "🖼 차트 이미지 크게 보기";
+}
+$("#m-imgsize").onclick = ()=>{
+  state.bigImages = !state.bigImages;
+  localStorage.setItem("tj-imgsize", state.bigImages ? "big" : "small");
+  $("#menu").classList.remove("on");
+  applyImageSize();
+  render();
+  toast(state.bigImages ? "차트를 크게 표시합니다" : "차트를 작게 표시합니다");
+};
 $("#m-theme").onclick = ()=>{
   const t = document.documentElement.dataset.theme==="dark" ? "light":"dark";
   document.documentElement.dataset.theme = t; localStorage.setItem("tj-theme", t);
@@ -2208,6 +2249,7 @@ $("#cfg-clear").onclick = ()=>{
 /* ---------------- boot ---------------- */
 (async function boot(){
   const t = localStorage.getItem("tj-theme"); if(t) document.documentElement.dataset.theme=t;
+  applyImageSize();
   let embedded = true;
   try{ embedded = (window.self!==window.top); }catch(e){}
   if(embedded) hostDownloads().then(dl=>{ if(!dl) $("#embed-note").style.display="block"; });
