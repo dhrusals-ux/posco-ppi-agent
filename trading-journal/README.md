@@ -34,7 +34,12 @@ https://claude.ai/code/artifact/e8692531-469b-4346-8727-0e98d23d2438
 ### 1. 그냥 열기 (가장 간단)
 `trading-journal/index.html` 파일을 더블클릭 → 브라우저에서 바로 실행됩니다.
 
-### 2. GitHub Pages로 웹사이트 공개
+### 2. Vercel로 짧은 주소 공개 (권장)
+`https://chuse.vercel.app` 처럼 짧은 주소로 배포합니다. 빌드 없이 이 폴더만 올리면 됩니다.
+순서는 [`docs/DEPLOY-VERCEL.md`](../docs/DEPLOY-VERCEL.md) 참고 —
+핵심은 Vercel 프로젝트 생성 시 **Root Directory 를 `trading-journal` 로 지정**하는 것입니다.
+
+### 3. GitHub Pages로 공개
 **Settings → Pages** 에서
 
 - **Source: Deploy from a branch** / Branch: `main` / Folder: `/ (root)` 로 설정하면
@@ -42,7 +47,7 @@ https://claude.ai/code/artifact/e8692531-469b-4346-8727-0e98d23d2438
 - 또는 **Source: GitHub Actions** 로 설정하면 포함된 워크플로(`.github/workflows/pages.yml`)가
   `trading-journal/` 폴더만 배포 → `https://<사용자명>.github.io/posco-ppi-agent/` 로 접속
 
-### 3. 로컬 서버로 실행
+### 4. 로컬 서버로 실행
 ```bash
 cd trading-journal
 python -m http.server 8000

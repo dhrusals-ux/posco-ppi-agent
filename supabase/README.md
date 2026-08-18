@@ -67,11 +67,15 @@ window.TJ_CONFIG = {
 앱 우측 상단 `⋯` → **☁️ 클라우드 연결 설정** 에서 두 값을 붙여넣습니다.
 (입력한 기기에만 저장되므로, 새 기기에서는 한 번씩 입력해야 합니다.)
 
-## 6단계 — 화면을 웹에 올리기 (GitHub Pages, 2분)
+## 6단계 — 화면을 웹에 올리기 (2분)
 
-1. 이 저장소 **Settings → Pages**
-2. **Source: GitHub Actions** 선택 (포함된 워크플로가 `trading-journal/` 폴더를 배포합니다)
-3. 잠시 후 `https://<사용자명>.github.io/posco-ppi-agent/` 로 접속됩니다
+**Vercel (권장 · 짧은 주소)** — [`docs/DEPLOY-VERCEL.md`](../docs/DEPLOY-VERCEL.md)
+저장소를 Import 하고 **Root Directory 를 `trading-journal`** 로 지정하면
+`https://chuse.vercel.app` 같은 주소가 만들어집니다.
+
+**GitHub Pages** — 저장소 **Settings → Pages → Source: GitHub Actions**
+포함된 워크플로가 `trading-journal/` 폴더를 배포하고,
+`https://<사용자명>.github.io/posco-ppi-agent/` 로 접속됩니다.
 
 이제 그 주소를 휴대폰·회사 PC 어디서 열어도 **이메일 + 비밀번호로 로그인**하면 같은 일지가 보입니다.
 첫 접속 시 **회원가입** 버튼으로 계정을 만드세요.
