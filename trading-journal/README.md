@@ -34,10 +34,11 @@ https://claude.ai/code/artifact/e8692531-469b-4346-8727-0e98d23d2438
 ### 1. 그냥 열기 (가장 간단)
 `trading-journal/index.html` 파일을 더블클릭 → 브라우저에서 바로 실행됩니다.
 
-### 2. Vercel로 짧은 주소 공개 (권장)
-`https://ch-trading.vercel.app` 처럼 짧은 주소로 배포합니다. 빌드 없이 이 폴더만 올리면 됩니다.
-순서는 [`docs/DEPLOY-VERCEL.md`](../docs/DEPLOY-VERCEL.md) 참고 —
-핵심은 Vercel 프로젝트 생성 시 **Root Directory 를 `trading-journal` 로 지정**하는 것입니다.
+### 2. Vercel로 웹에 올리기 (권장)
+독립 저장소(`ch-trading`)로 배포하면 저장소 루트가 곧 사이트라 추가 설정이 없습니다.
+`python tools/make-standalone.py` 로 배포용 트리를 생성하고,
+순서는 [`docs/DEPLOY-VERCEL.md`](../docs/DEPLOY-VERCEL.md) 참고.
+**상업 서비스라면 Vercel Pro·Supabase Pro가 필요합니다** (무료 플랜은 상업 이용 금지/미보장).
 
 ### 3. GitHub Pages로 공개
 **Settings → Pages** 에서

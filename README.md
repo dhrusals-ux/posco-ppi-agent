@@ -168,7 +168,9 @@ posco-ppi-agent/
 | 🖥 **자체 서버 모드** | 내 서버의 SQLite (`server/`, FastAPI) | `uvicorn server.main:app --host 0.0.0.0 --port 8000` |
 | 💾 **브라우저 모드** (서버 불필요) | 접속한 브라우저(IndexedDB) | `trading-journal/index.html` 열기 · GitHub Pages |
 
-- 접속 주소(무료 배포): [`docs/DEPLOY-VERCEL.md`](docs/DEPLOY-VERCEL.md) — Vercel에 화면 올리기
+- 접속 주소(배포): [`docs/DEPLOY-VERCEL.md`](docs/DEPLOY-VERCEL.md) — Vercel에 화면 올리기
+- 상업 서비스 필수 문서(약관·개인정보처리방침·환불정책 초안): [`docs/legal/`](docs/legal/)
+- 독립 저장소 트리 생성: `python tools/make-standalone.py`
 - 무료 클라우드 설정: [`supabase/README.md`](supabase/README.md) — 로그인·DB·이미지
 - 자체 서버 설정·배포·API: [`server/README.md`](server/README.md)
 - 앱 사용법·단축키: [`trading-journal/README.md`](trading-journal/README.md)

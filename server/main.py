@@ -374,6 +374,17 @@ def delete_all(user: sqlite3.Row = Depends(current_user)) -> dict[str, bool]:
     return {"ok": True}
 
 
+@app.delete("/api/me")
+def delete_account(response: Response, user: sqlite3.Row = Depends(current_user)) -> dict[str, bool]:
+    """회원탈퇴 — 계정과 모든 일지·이미지를 즉시 삭제한다 (복구 불가)."""
+    with db() as con:
+        con.execute("DELETE FROM images WHERE user_id=?", (user["id"],))
+        con.execute("DELETE FROM entries WHERE user_id=?", (user["id"],))
+        con.execute("DELETE FROM users WHERE id=?", (user["id"],))
+    response.delete_cookie(COOKIE, path="/")
+    return {"ok": True}
+
+
 # --------------------------------------------------------------------------- 이미지 API
 @app.post("/api/images")
 async def upload_image(

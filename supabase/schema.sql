@@ -59,3 +59,31 @@ create policy "charts are private" on storage.objects
   for all to authenticated
   using      (bucket_id = 'charts' and (storage.foldername(name))[1] = auth.uid()::text)
   with check (bucket_id = 'charts' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- 5) 회원탈퇴 — 본인 계정과 데이터를 완전히 삭제 --------------------
+-- 개인정보 삭제 요구(개인정보보호법 제36조)에 대응하기 위한 함수입니다.
+-- 클라이언트는 POST /rest/v1/rpc/delete_own_account 로 호출합니다.
+create or replace function public.delete_own_account()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  uid uuid := auth.uid();
+begin
+  if uid is null then
+    raise exception 'not authenticated';
+  end if;
+
+  delete from storage.objects
+   where bucket_id = 'charts'
+     and (storage.foldername(name))[1] = uid::text;
+
+  delete from public.entries where user_id = uid;
+  delete from auth.users   where id = uid;
+end;
+$$;
+
+revoke all on function public.delete_own_account() from public, anon;
+grant execute on function public.delete_own_account() to authenticated;
