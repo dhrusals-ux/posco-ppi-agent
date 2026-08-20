@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>매매일지 · Trading Journal</title>
 <script src="config.js"></script>
+<meta name="theme-color" content="#0f1218">
+<meta name="description" content="차트 이미지와 코멘트로 매매를 복기하고, 일별·주별·월간 성과와 장중 배열 변화, 시사점을 한곳에서 관리하는 매매일지.">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="매매일지">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%93%3C/text%3E%3C/svg%3E">
 <style>
 :root{
@@ -40,6 +46,13 @@ html[data-theme="light"]{
 }
 }
 *{box-sizing:border-box}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;transition-duration:.01ms !important}
+  html{scroll-behavior:auto}
+}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 html,body{margin:0;padding:0}
 body{
   background:var(--bg); color:var(--text);
@@ -106,6 +119,7 @@ main{max-width:1180px;margin:0 auto;padding:18px 18px 80px}
 .panel h3{margin:0 0 12px;font-size:14px;letter-spacing:-.2px}
 .empty{padding:44px 20px;text-align:center;color:var(--faint);border:1px dashed var(--line);border-radius:var(--radius);background:var(--panel-2)}
 .empty b{display:block;color:var(--muted);font-size:15px;margin-bottom:6px}
+.empty-acts{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:16px}
 
 /* ---------- entry card ---------- */
 .entry{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:12px;overflow:hidden}
@@ -341,19 +355,54 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
 .auth-alt button:hover{color:var(--muted)}
 
 /* ---------- lightbox / toast / menu ---------- */
-#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.9);display:none;z-index:90;place-items:center;padding:24px;cursor:zoom-out}
-#lightbox.on{display:grid}
-#lightbox img{max-width:96vw;max-height:92vh;border-radius:10px}
-#lightbox .lb-nav{position:absolute;top:50%;transform:translateY(-50%);font-size:38px;color:#fff;opacity:.55;padding:16px}
-#lightbox .lb-nav:hover{opacity:1}
-#lightbox .prev{left:6px} #lightbox .next{right:6px}
+#lightbox{position:fixed;inset:0;background:rgba(8,10,14,.94);display:none;z-index:90;overflow:hidden}
+#lightbox.on{display:block}
+#lb-stage{position:absolute;inset:0;display:grid;place-items:center;padding:20px;cursor:zoom-in;touch-action:none}
+#lb-stage.zoomed{cursor:grab}
+#lb-stage.dragging{cursor:grabbing}
+#lb-img{
+  max-width:96vw;max-height:92vh;border-radius:8px;transform-origin:center center;
+  transition:transform .16s ease-out;will-change:transform;user-select:none;-webkit-user-drag:none
+}
+#lb-stage.dragging #lb-img{transition:none}
+#lightbox .lb-nav{
+  position:absolute;top:50%;transform:translateY(-50%);font-size:34px;color:#fff;opacity:.5;
+  padding:14px 18px;border-radius:12px;background:rgba(0,0,0,.35)
+}
+#lightbox .lb-nav:hover{opacity:1;background:rgba(0,0,0,.6)}
+#lightbox .prev{left:10px} #lightbox .next{right:10px}
+.lb-bar{
+  position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:10px;
+  padding:14px 16px;color:#fff;font-size:13px;font-weight:600;
+  background:linear-gradient(180deg,rgba(0,0,0,.55),transparent)
+}
+.lb-bar .count{font-variant-numeric:tabular-nums;letter-spacing:.3px}
+.lb-bar .spacer{flex:1}
+.lb-bar button{
+  color:#fff;opacity:.7;padding:6px 11px;border-radius:9px;font-size:13px;font-weight:600;
+  border:1px solid rgba(255,255,255,.25)
+}
+.lb-bar button:hover{opacity:1;background:rgba(255,255,255,.12)}
+.lb-hint{
+  position:absolute;bottom:14px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,.55);
+  font-size:12px;text-align:center;pointer-events:none
+}
+@media(max-width:720px){ .lb-hint{display:none} #lightbox .lb-nav{font-size:28px;padding:10px 12px} }
 #toast{
   position:fixed;left:50%;bottom:26px;transform:translate(-50%,20px);z-index:99;
+  display:flex;align-items:center;gap:14px;max-width:min(92vw,460px);
   background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);
-  padding:11px 18px;border-radius:11px;font-size:13px;font-weight:600;
-  opacity:0;pointer-events:none;transition:.22s
+  padding:11px 14px 11px 18px;border-radius:11px;font-size:13px;font-weight:600;
+  opacity:0;pointer-events:none;transition:opacity .22s,transform .22s
 }
 #toast.on{opacity:1;transform:translate(-50%,0)}
+#toast.act{pointer-events:auto}
+#toast .msg{flex:1;min-width:0}
+#toast button{
+  flex:0 0 auto;padding:6px 12px;border-radius:8px;border:1px solid var(--accent);
+  color:var(--accent);font-weight:700;font-size:12.5px;background:transparent
+}
+#toast button:hover{background:var(--accent);color:#fff}
 .menu{
   position:absolute;right:18px;top:56px;z-index:50;background:var(--panel);border:1px solid var(--line);
   border-radius:12px;box-shadow:var(--shadow);padding:6px;min-width:200px;display:none
@@ -403,18 +452,18 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
 
 <header class="topbar">
   <div class="brand">📓 매매일지 <small>TRADING JOURNAL</small></div>
-  <div class="tabs" id="tabs">
+  <nav class="tabs" id="tabs" aria-label="화면 전환">
     <button data-view="day" class="on">일별</button>
     <button data-view="week">주별</button>
     <button data-view="month">월간</button>
     <button data-view="market">장중</button>
     <button data-view="lessons">시사점</button>
     <button data-view="stats">통계</button>
-  </div>
+  </nav>
   <div class="spacer"></div>
   <div class="search"><input id="q" type="search" placeholder="종목 · 태그 · 코멘트 검색"></div>
   <button class="btn primary" id="btn-new">+ 새 일지</button>
-  <button class="btn icon ghost" id="btn-menu" title="설정">⋯</button>
+  <button class="btn icon ghost" id="btn-menu" title="설정 메뉴" aria-label="설정 메뉴 열기" aria-haspopup="true">⋯</button>
 </header>
 
 <div class="menu" id="menu">
@@ -440,8 +489,8 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
 
 <main>
   <div class="periodbar">
-    <button class="nav-btn" id="prev">‹</button>
-    <button class="nav-btn" id="next">›</button>
+    <button class="nav-btn" id="prev" aria-label="이전 기간">‹</button>
+    <button class="nav-btn" id="next" aria-label="다음 기간">›</button>
     <h2 id="period-label">—</h2>
     <span class="sub" id="period-sub"></span>
     <div class="spacer"></div>
@@ -452,7 +501,7 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
   <div id="view"></div>
 </main>
 
-<button class="fab" id="fab">+</button>
+<button class="fab" id="fab" aria-label="새 기록 작성">+</button>
 
 <dialog id="modal">
   <form class="modal" method="dialog" id="form">
@@ -630,12 +679,22 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
   </form>
 </dialog>
 
-<div id="lightbox">
-  <button class="lb-nav prev" id="lb-prev">‹</button>
-  <img id="lb-img" alt="차트 이미지">
-  <button class="lb-nav next" id="lb-next">›</button>
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="차트 이미지 확대 보기">
+  <div id="lb-stage"><img id="lb-img" alt="차트 이미지" draggable="false"></div>
+  <div class="lb-bar">
+    <span class="count" id="lb-count">1 / 1</span>
+    <span id="lb-zoom" class="count">100%</span>
+    <span class="spacer"></span>
+    <button type="button" id="lb-out" aria-label="축소">−</button>
+    <button type="button" id="lb-in" aria-label="확대">+</button>
+    <button type="button" id="lb-fit">맞춤</button>
+    <button type="button" id="lb-close" aria-label="닫기">✕ 닫기</button>
+  </div>
+  <button class="lb-nav prev" id="lb-prev" aria-label="이전 이미지">‹</button>
+  <button class="lb-nav next" id="lb-next" aria-label="다음 이미지">›</button>
+  <div class="lb-hint">휠 또는 +/− 로 확대 · 끌어서 이동 · 더블클릭 확대/맞춤 · ← → 이미지 이동 · Esc 닫기</div>
 </div>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"><span class="msg"></span></div>
 <input type="file" id="import-file" accept="application/json" hidden>
 
 <script>
@@ -667,9 +726,25 @@ const cls = n => n==null||Math.abs(n)<1e-9?"zero":(n>0?"pos":"neg");
 const weekNo = d => { const t=new Date(d.getFullYear(),d.getMonth(),d.getDate()); t.setDate(t.getDate()+3-((t.getDay()+6)%7));
   const first=new Date(t.getFullYear(),0,4); return 1+Math.round(((t-first)/864e5-3+((first.getDay()+6)%7))/7); };
 
-function toast(msg){
-  const el=$("#toast"); el.textContent=msg; el.classList.add("on");
-  clearTimeout(toast._t); toast._t=setTimeout(()=>el.classList.remove("on"),2200);
+function toast(msg, action){
+  const el = $("#toast");
+  $(".msg", el).textContent = msg;
+  const old = $("#toast button"); if(old) old.remove();
+  el.classList.toggle("act", !!action);
+  if(action){
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = action.label;
+    b.onclick = ()=>{ hideToast(); action.onClick(); };
+    el.appendChild(b);
+  }
+  el.classList.add("on");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(hideToast, action ? (action.ms || 7000) : 2200);
+}
+function hideToast(){
+  const el = $("#toast");
+  el.classList.remove("on","act");
+  const b = $("#toast button"); if(b) b.remove();
 }
 
 /* ---------------- IndexedDB ---------------- */
@@ -716,6 +791,7 @@ const state = {
   modalMode: "trade",       // trade | market
   mxFilter: null,           // "역배열>정배열" 형태의 전환 필터
   bigImages: localStorage.getItem("tj-imgsize") !== "small",
+  shown: {lessons:60, market:60, month:60},   // 긴 목록은 나눠서 그린다
   pending: [],           // 편집 중인 이미지 [{id,thumb,blob,isNew}]
   removed: []            // 편집 중 제거된 기존 이미지 id
 };
@@ -1084,10 +1160,13 @@ function matches(e, q){
          (e.lesson||"").toLowerCase().includes(q) ||
          (e.tags||[]).some(t=>t.toLowerCase().includes(q));
 }
+let _visCache = null;                     // 렌더 1회 동안만 유효 (render() 시작 시 무효화)
 function visible(){                       // 매매 일지만 (시사점 메모·장중 관찰 제외)
+  if(_visCache) return _visCache;
   const q = state.query.trim().toLowerCase();
   const trades = state.entries.filter(e=>!e.isLesson && !e.isMarket);
-  return q ? trades.filter(e=>matches(e,q)) : trades;
+  _visCache = q ? trades.filter(e=>matches(e,q)) : trades;
+  return _visCache;
 }
 
 /* 이동평균 배열 상태 */
@@ -1147,6 +1226,7 @@ function dayPnl(list){
 
 /* ---------------- rendering: shell ---------------- */
 function render(){
+  _visCache = null;
   renderView();
   hydrateImages();
 }
@@ -1169,7 +1249,12 @@ function statCards(items){
     (i.x?'<div class="x">'+i.x+'</div>':'')+'</div>').join("");
 }
 function period(label, sub){ $("#period-label").textContent=label; $("#period-sub").textContent=sub||""; }
-const emptyBox = (t,s)=> '<div class="empty"><b>'+t+'</b>'+(s||"")+'</div>';
+const moreBtn = (key, rest)=> rest>0
+  ? '<div class="empty-acts" style="margin:4px 0 8px"><button class="btn" data-more="'+key+'">'+
+    '더 보기 ('+rest.toLocaleString("ko-KR")+'개 남음)</button></div>'
+  : "";
+const emptyBox = (t,s,acts)=> '<div class="empty"><b>'+t+'</b>'+(s||"")+
+  (acts?'<div class="empty-acts">'+acts+'</div>':"")+'</div>';
 
 /* ---------------- entry card ---------------- */
 function entryCard(e){
@@ -1242,7 +1327,10 @@ function renderDay(){
   $("#view").innerHTML =
     '<div class="week-grid" id="day-strip">'+strip+'</div>'+
     (list.length ? entryList(list)
-      : emptyBox("이 날의 매매일지가 없습니다","‘+ 새 일지’ 버튼으로 오늘의 매매를 기록해 보세요."));
+      : emptyBox("이 날의 매매일지가 없습니다",
+          "차트 캡처를 붙여넣고 진입·청산 근거를 남기면 이 자리에 쌓입니다.",
+          '<button class="btn primary" id="empty-new">+ 일지 쓰기</button>'+
+          (state.entries.length ? "" : '<button class="btn" id="empty-sample">🧪 샘플로 둘러보기</button>')));
 }
 
 /* ---------------- view: 주별 ---------------- */
@@ -1312,9 +1400,10 @@ function renderMonth(){
     if(i%7===6) weeks.push(addDays(gridStart,i-6));
   }
 
-  const wrows = weeks.map(ws=>{
-    const wl = inRange(ws,addDays(ws,6)), p = dayPnl(wl);
-    const max = Math.max(1, ...weeks.map(w=>Math.abs(dayPnl(inRange(w,addDays(w,6)))||0)));
+  const weekPnls = weeks.map(w=>dayPnl(inRange(w,addDays(w,6))));
+  const weekMax = Math.max(1, ...weekPnls.map(v=>Math.abs(v||0)));
+  const wrows = weeks.map((ws,wi)=>{
+    const p = weekPnls[wi], max = weekMax;
     const wpct = Math.min(100, Math.abs(p||0)/max*100);
     return '<div class="bar-row"><div class="lbl">'+weekNo(ws)+'주차 <span style="color:var(--faint)">'+
       (ws.getMonth()+1)+'/'+ws.getDate()+'</span></div>'+
@@ -1323,12 +1412,13 @@ function renderMonth(){
       '<div class="val '+cls(p)+'">'+(p==null?"—":signed(p))+'</div></div>';
   }).join("");
 
+  const dailyMax = Math.max(1, ...dayPnls.map(Math.abs));
   const daily = Array.from(map.keys()).sort().map(k=>{
     const dl = map.get(k), p = dayPnl(dl), dd = parseYmd(k);
     return '<div class="bar-row" data-date="'+k+'" style="cursor:pointer">'+
       '<div class="lbl">'+(dd.getMonth()+1)+'/'+dd.getDate()+' ('+DOW[(dd.getDay()+6)%7]+') · '+dl.length+'건</div>'+
       '<div class="bar-track"><div class="bar-fill" style="width:'+
-        Math.min(100,Math.abs(p||0)/Math.max(1,...dayPnls.map(Math.abs))*100)+'%;background:'+
+        Math.min(100,Math.abs(p||0)/dailyMax*100)+'%;background:'+
         ((p||0)>=0?"var(--win)":"var(--loss)")+'"></div></div>'+
       '<div class="val '+cls(p)+'">'+(p==null?"—":signed(p))+'</div></div>';
   }).join("");
@@ -1340,7 +1430,11 @@ function renderMonth(){
       '<div class="panel"><h3>📈 일자별 손익 <span style="color:var(--faint);font-weight:400">(클릭 시 이동)</span></h3>'+
         '<div class="bars" id="daily-bars">'+(daily||emptyBox("데이터 없음",""))+'</div></div>'+
     '</div>'+
-    (list.length? '<div class="panel"><h3>📝 이번 달 일지 '+list.length+'건</h3>'+entryList(list)+'</div>' : "");
+    (list.length
+      ? '<div class="panel"><h3>📝 이번 달 일지 '+list.length+'건</h3>'+
+        entryList(list.slice().sort(cmpEntry).slice(0, state.shown.month))+
+        moreBtn("month", list.length - Math.min(list.length, state.shown.month))+'</div>'
+      : "");
 }
 
 /* ---------------- view: 통계 (전체 기간) ---------------- */
@@ -1377,13 +1471,16 @@ function renderStats(){
     '<div style="display:flex;justify-content:space-between;color:var(--faint);font-size:11px;margin-top:4px">'+
       '<span>'+keys[0]+'</span><span>최고 '+signed(mx)+' · 최저 '+signed(mn)+'</span><span>'+keys[keys.length-1]+'</span></div>';
 
-  const bars = (rows,fmt) => rows.length ? '<div class="bars">'+rows.map(r=>{
-      const max = Math.max(1,...rows.map(x=>Math.abs(x.v||0)));
+  const bars = (rows,fmt) => {
+    if(!rows.length) return emptyBox("데이터 없음","");
+    const max = Math.max(1,...rows.map(x=>Math.abs(x.v||0)));
+    return '<div class="bars">'+rows.map(r=>{
       return '<div class="bar-row"><div class="lbl">'+esc(r.label)+'</div>'+
         '<div class="bar-track"><div class="bar-fill" style="width:'+(Math.abs(r.v||0)/max*100)+'%;background:'+
         ((r.v||0)>=0?"var(--win)":"var(--loss)")+'"></div></div>'+
         '<div class="val '+cls(r.v)+'">'+(fmt?fmt(r):signed(r.v))+'</div></div>';
-    }).join("")+'</div>' : emptyBox("데이터 없음","");
+    }).join("")+'</div>';
+  };
 
   // 월별
   const mm = new Map();
@@ -1490,12 +1587,14 @@ function renderMarket(){
 
   if(!all.length){
     $("#view").innerHTML = bar + emptyBox("아직 장중 관찰 기록이 없습니다",
-      "장 시작 전 배열과 시작 후 배열을 남겨두면(예: <b>역배열 → 정배열</b>), 어떤 전환이 자주 나오는지 쌓입니다.");
+      "장 시작 전 배열과 시작 후 배열을 남겨두면(예: <b>역배열 → 정배열</b>), 어떤 전환이 자주 나오는지 쌓입니다.",
+      '<button class="btn primary" id="empty-obs">+ 장중 관찰 기록</button>');
     return;
   }
 
+  const page = items.slice(0, state.shown.market);
   const groups = new Map();
-  items.forEach(e=>{ if(!groups.has(e.date)) groups.set(e.date,[]); groups.get(e.date).push(e); });
+  page.forEach(e=>{ if(!groups.has(e.date)) groups.set(e.date,[]); groups.get(e.date).push(e); });
   const body = groups.size
     ? Array.from(groups.entries()).map(([d,list])=>{
         const dd = parseYmd(d);
@@ -1504,7 +1603,7 @@ function renderMarket(){
       }).join("")
     : emptyBox("조건에 맞는 기록이 없습니다","필터나 검색어를 바꿔보세요.");
 
-  $("#view").innerHTML = bar + matrix + body;
+  $("#view").innerHTML = bar + matrix + body + moreBtn("market", items.length - page.length);
 }
 
 /* ---------------- view: 시사점 (누적 보관) ---------------- */
@@ -1564,12 +1663,14 @@ function renderLessons(){
     $("#view").innerHTML = bar + emptyBox(
       state.query ? "검색 결과가 없습니다" : "아직 쌓인 시사점이 없습니다",
       state.query ? "다른 검색어로 찾아보세요." :
-      "일지를 쓸 때 <b>🎯 최종 정리 시사점</b> 칸에 남긴 내용이 여기에 계속 쌓입니다.");
+      "일지를 쓸 때 <b>🎯 최종 정리 시사점</b> 칸에 남긴 내용이 여기에 계속 쌓입니다.",
+      state.query ? "" : '<button class="btn primary" id="empty-lesson">+ 시사점 추가</button>');
     return;
   }
 
+  const page = items.slice(0, state.shown.lessons);
   const groups = new Map();
-  items.forEach(e=>{
+  page.forEach(e=>{
     const k = e.date.slice(0,7);
     if(!groups.has(k)) groups.set(k,[]);
     groups.get(k).push(e);
@@ -1578,7 +1679,7 @@ function renderLessons(){
     '<div class="les-group"><h4>'+m.replace("-","년 ")+'월 · '+list.length+'개</h4>'+
       list.map(lessonCard).join("")+'</div>').join("");
 
-  $("#view").innerHTML = bar + body;
+  $("#view").innerHTML = bar + body + moreBtn("lessons", items.length - page.length);
 }
 
 function lessonsMarkdown(){
@@ -1769,15 +1870,50 @@ async function saveEntry(){
     btn.disabled = false; btn.textContent = "저장";
   }
 }
+/* 삭제는 6초간 유예한다 — 그 사이 되돌리기를 누르면 서버/저장소에 손대지 않는다 */
+const pendingDeletes = new Map();          // id -> {entry, timer}
+
+async function commitDelete(id){
+  const job = pendingDeletes.get(id);
+  if(!job) return;
+  pendingDeletes.delete(id);
+  clearTimeout(job.timer);
+  try{ await Store.removeEntry(job.entry); }
+  catch(err){
+    console.error(err);
+    state.entries = state.entries.filter(x=>x.id!==id).concat([job.entry]).sort(cmpEntry);
+    render();
+    toast("삭제하지 못했습니다: "+err.message);
+  }
+}
+function undoDelete(id){
+  const job = pendingDeletes.get(id);
+  if(!job) return;
+  clearTimeout(job.timer);
+  pendingDeletes.delete(id);
+  state.entries = state.entries.filter(x=>x.id!==job.entry.id).concat([job.entry]).sort(cmpEntry);
+  render();
+  toast("삭제를 취소했습니다");
+}
 async function deleteEntry(id){
   const e = state.entries.find(x=>x.id===id); if(!e) return;
-  if(!confirm("‘"+(e.symbol||"")+"’ 일지를 삭제할까요? 되돌릴 수 없습니다.")) return;
-  try{ await Store.removeEntry(e); }
-  catch(err){ console.error(err); toast("삭제하지 못했습니다: "+err.message); return; }
-  state.entries = state.entries.filter(x=>x.id!==id);
+  const label = e.isLesson ? "시사점" : (e.isMarket ? "장중 관찰 기록" : "일지");
+  if(!confirm("‘"+(e.symbol||"")+"’ "+label+"을 삭제할까요?")) return;
+
+  state.entries = state.entries.filter(x=>x.id!==id);       // 화면에서 먼저 감춘다
   if(modal.open) closeModal();
-  render(); toast("삭제되었습니다");
+  if(lesModal.open) lesModal.close();
+  render();
+
+  const timer = setTimeout(()=>commitDelete(id), 6000);
+  pendingDeletes.set(id, {entry:e, timer});
+  toast("삭제되었습니다", {label:"되돌리기", ms:6000, onClick:()=>undoDelete(id)});
 }
+
+/* 탭을 닫기 전에 유예 중인 삭제를 확정한다 (남아 있으면 데이터가 보존되는 방향) */
+window.addEventListener("pagehide", ()=>{
+  for(const id of Array.from(pendingDeletes.keys())) commitDelete(id);
+});
 
 /* ---------------- 단독 시사점 (매매와 무관한 메모) ---------------- */
 const lesModal = $("#lesson-modal");
@@ -1841,15 +1977,50 @@ async function exportLessons(){
 }
 
 /* ---------------- lightbox ---------------- */
-const lb = { ids:[], i:0 };
+const lb = { ids:[], i:0, k:1, x:0, y:0, drag:null, pinch:null };
+const MAX_ZOOM = 6, MIN_ZOOM = 1;
+
+function applyLB(){
+  const img = $("#lb-img"), stage = $("#lb-stage");
+  img.style.transform = "translate("+lb.x+"px,"+lb.y+"px) scale("+lb.k+")";
+  stage.classList.toggle("zoomed", lb.k > 1.001);
+  $("#lb-zoom").textContent = Math.round(lb.k*100)+"%";
+  $("#lb-count").textContent = (lb.i+1)+" / "+lb.ids.length;
+}
+function fitLB(){ lb.k = 1; lb.x = 0; lb.y = 0; applyLB(); }
+function zoomLB(factor, cx, cy){
+  const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, lb.k * factor));
+  if(Math.abs(k - lb.k) < 1e-4) return;
+  const rect = $("#lb-img").getBoundingClientRect();
+  const ox = (cx==null ? rect.left + rect.width/2 : cx) - (rect.left + rect.width/2);
+  const oy = (cy==null ? rect.top + rect.height/2 : cy) - (rect.top + rect.height/2);
+  const ratio = k / lb.k;
+  lb.x = lb.x - ox*(ratio-1);
+  lb.y = lb.y - oy*(ratio-1);
+  lb.k = k;
+  if(lb.k <= 1.001){ lb.x = 0; lb.y = 0; }
+  applyLB();
+}
 async function showLB(){
   const id = lb.ids[lb.i]; if(!id) return;
-  $("#lb-img").src = BLANK;
-  try{ $("#lb-img").src = await Store.fullURL(id); }
+  const img = $("#lb-img");
+  img.src = BLANK; fitLB();
+  try{ img.src = await Store.fullURL(id); }
   catch(err){ console.error(err); toast("이미지를 불러오지 못했습니다"); }
 }
-function openLB(ids,i){ lb.ids=ids; lb.i=i; $("#lightbox").classList.add("on"); showLB(); }
-function moveLB(d){ if(!lb.ids.length) return; lb.i=(lb.i+d+lb.ids.length)%lb.ids.length; showLB(); }
+function openLB(ids,i){
+  lb.ids = ids; lb.i = i;
+  $("#lightbox").classList.add("on");
+  $$("#lightbox .lb-nav").forEach(b=>b.style.display = ids.length>1 ? "" : "none");
+  showLB();
+  setTimeout(()=>$("#lb-close").focus(), 40);
+}
+function closeLB(){ $("#lightbox").classList.remove("on"); fitLB(); }
+function moveLB(d){
+  if(lb.ids.length<2) return;
+  lb.i = (lb.i+d+lb.ids.length)%lb.ids.length;
+  showLB();
+}
 
 /* ---------------- backup ---------------- */
 function blobToDataURL(b){ return new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(b); }); }
@@ -1959,7 +2130,9 @@ function gotoDate(k){ state.cursor = parseYmd(k); state.view="day"; localStorage
 
 $("#tabs").addEventListener("click", e=>{
   const b = e.target.closest("button[data-view]"); if(!b) return;
-  state.view = b.dataset.view; localStorage.setItem("tj-view", state.view); render();
+  state.view = b.dataset.view;
+  state.shown = {lessons:60, market:60, month:60};
+  localStorage.setItem("tj-view", state.view); render();
 });
 $("#prev").onclick = ()=>shiftCursor(-1);
 $("#next").onclick = ()=>shiftCursor(1);
@@ -1971,7 +2144,11 @@ function newRecord(){
 }
 $("#btn-new").onclick = newRecord;
 $("#fab").onclick = newRecord;
-$("#q").addEventListener("input", e=>{ state.query=e.target.value; render(); });
+$("#q").addEventListener("input", e=>{
+  state.query = e.target.value;
+  state.shown = {lessons:60, market:60, month:60};
+  render();
+});
 
 $("#view").addEventListener("click", e=>{
   const img = e.target.closest(".shots img");
@@ -1995,7 +2172,17 @@ $("#view").addEventListener("click", e=>{
     }
     return;
   }
-  if(e.target.closest("#add-obs")){ openModal(null, ymd(new Date()), "market"); return; }
+  const more = e.target.closest("[data-more]");
+  if(more){
+    const k = more.dataset.more;
+    state.shown[k] = (state.shown[k]||60) + 120;
+    render();
+    return;
+  }
+  if(e.target.closest("#empty-new")){ openModal(null); return; }
+  if(e.target.closest("#empty-sample")){ addSample(); return; }
+  if(e.target.closest("#empty-lesson")){ openLesson(null); return; }
+  if(e.target.closest("#empty-obs") || e.target.closest("#add-obs")){ openModal(null, ymd(new Date()), "market"); return; }
   if(e.target.closest("#mx-clear")){ state.mxFilter = null; render(); return; }
   const mx = e.target.closest("[data-mx]");
   if(mx){ state.mxFilter = (state.mxFilter===mx.dataset.mx) ? null : mx.dataset.mx; render(); return; }
@@ -2061,13 +2248,62 @@ document.addEventListener("paste", e=>{
   if(files.length){ e.preventDefault(); addFiles(files); }
 });
 
-/* 라이트박스 */
-$("#lightbox").addEventListener("click", e=>{
-  if(e.target.id==="lb-prev"){ moveLB(-1); return; }
-  if(e.target.id==="lb-next"){ moveLB(1); return; }
-  if(e.target.tagName!=="IMG") $("#lightbox").classList.remove("on");
+/* 라이트박스 — 확대·이동·이미지 넘김 */
+$("#lb-prev").onclick = e=>{ e.stopPropagation(); moveLB(-1); };
+$("#lb-next").onclick = e=>{ e.stopPropagation(); moveLB(1); };
+$("#lb-close").onclick = closeLB;
+$("#lb-in").onclick  = e=>{ e.stopPropagation(); zoomLB(1.4); };
+$("#lb-out").onclick = e=>{ e.stopPropagation(); zoomLB(1/1.4); };
+$("#lb-fit").onclick = e=>{ e.stopPropagation(); fitLB(); };
+
+$("#lb-stage").addEventListener("wheel", e=>{
+  e.preventDefault();
+  zoomLB(e.deltaY < 0 ? 1.18 : 1/1.18, e.clientX, e.clientY);
+}, {passive:false});
+
+$("#lb-stage").addEventListener("dblclick", e=>{
+  e.preventDefault();
+  if(lb.k > 1.001) fitLB(); else zoomLB(2.5, e.clientX, e.clientY);
 });
-$("#lb-img").onclick = ()=>moveLB(1);
+
+$("#lb-stage").addEventListener("pointerdown", e=>{
+  if(lb.k <= 1.001) return;
+  lb.drag = {id:e.pointerId, sx:e.clientX, sy:e.clientY, ox:lb.x, oy:lb.y};
+  $("#lb-stage").classList.add("dragging");
+  $("#lb-stage").setPointerCapture(e.pointerId);
+});
+$("#lb-stage").addEventListener("pointermove", e=>{
+  if(!lb.drag || lb.drag.id!==e.pointerId) return;
+  lb.x = lb.drag.ox + (e.clientX - lb.drag.sx);
+  lb.y = lb.drag.oy + (e.clientY - lb.drag.sy);
+  applyLB();
+});
+["pointerup","pointercancel"].forEach(ev=>$("#lb-stage").addEventListener(ev, e=>{
+  if(lb.drag && lb.drag.id===e.pointerId){ lb.drag = null; $("#lb-stage").classList.remove("dragging"); }
+}));
+
+/* 모바일 핀치 줌 */
+$("#lb-stage").addEventListener("touchstart", e=>{
+  if(e.touches.length===2){
+    const [a,b] = e.touches;
+    lb.pinch = {d:Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY), k:lb.k};
+  }
+}, {passive:true});
+$("#lb-stage").addEventListener("touchmove", e=>{
+  if(lb.pinch && e.touches.length===2){
+    e.preventDefault();
+    const [a,b] = e.touches;
+    const d = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+    const target = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, lb.pinch.k * (d/lb.pinch.d)));
+    zoomLB(target/lb.k, (a.clientX+b.clientX)/2, (a.clientY+b.clientY)/2);
+  }
+}, {passive:false});
+$("#lb-stage").addEventListener("touchend", ()=>{ lb.pinch = null; }, {passive:true});
+
+/* 배경(확대되지 않은 상태)을 누르면 닫기 */
+$("#lb-stage").addEventListener("click", e=>{
+  if(e.target.id!=="lb-img" && lb.k<=1.001) closeLB();
+});
 
 /* 메뉴 */
 $("#btn-menu").onclick = e=>{ e.stopPropagation(); $("#menu").classList.toggle("on"); };
@@ -2107,10 +2343,13 @@ $("#m-wipe").onclick = async ()=>{
 document.addEventListener("keydown", e=>{
   if(modal.open) return;
   const typing = /INPUT|TEXTAREA|SELECT/.test((e.target.tagName||""));
-  if(e.key==="Escape"){ $("#lightbox").classList.remove("on"); return; }
+  if(e.key==="Escape"){ closeLB(); return; }
   if($("#lightbox").classList.contains("on")){
-    if(e.key==="ArrowLeft") moveLB(-1);
+    if(e.key==="ArrowLeft")  moveLB(-1);
     if(e.key==="ArrowRight") moveLB(1);
+    if(e.key==="+" || e.key==="=") zoomLB(1.4);
+    if(e.key==="-" || e.key==="_") zoomLB(1/1.4);
+    if(e.key==="0") fitLB();
     return;
   }
   if(typing) return;
@@ -2276,8 +2515,17 @@ $("#cfg-clear").onclick = ()=>{
   startApp(); toast("연결을 해제하고 브라우저 저장 모드로 돌아갑니다");
 };
 
+/* 홈 화면 설치·오프라인 지원 */
+function registerSW(){
+  if(!("serviceWorker" in navigator)) return;
+  if(location.protocol!=="https:" && location.hostname!=="localhost" && location.hostname!=="127.0.0.1") return;
+  try{ if(window.self!==window.top) return; }catch(e){ return; }
+  navigator.serviceWorker.register("sw.js").catch(err=>console.warn("서비스 워커 등록 실패", err));
+}
+
 /* ---------------- boot ---------------- */
 (async function boot(){
+  registerSW();
   const t = localStorage.getItem("tj-theme"); if(t) document.documentElement.dataset.theme=t;
   applyImageSize();
   let embedded = true;

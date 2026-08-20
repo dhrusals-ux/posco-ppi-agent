@@ -7,3 +7,8 @@ server/data/
 # Python
 __pycache__/
 *.pyc
+
+# 테스트 산출물
+tests/.tmp/
+node_modules/
+package-lock.json

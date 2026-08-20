@@ -1,0 +1,19 @@
+{
+  "name": "매매일지 — 차트와 코멘트로 복기하는 트레이딩 일지",
+  "short_name": "매매일지",
+  "description": "차트 이미지와 코멘트로 매매를 복기하고 일별·주별·월간 성과, 장중 배열 변화, 시사점을 관리합니다.",
+  "lang": "ko",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f1218",
+  "theme_color": "#0f1218",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -171,6 +171,7 @@ posco-ppi-agent/
 - 접속 주소(배포): [`docs/DEPLOY-VERCEL.md`](docs/DEPLOY-VERCEL.md) — Vercel에 화면 올리기
 - 상업 서비스 필수 문서(약관·개인정보처리방침·환불정책 초안): [`docs/legal/`](docs/legal/)
 - 독립 저장소 트리 생성: `python tools/make-standalone.py`
+- 전체 검증(브라우저 자동화 12종): `bash tests/run.sh` — [`tests/README.md`](tests/README.md)
 - 무료 클라우드 설정: [`supabase/README.md`](supabase/README.md) — 로그인·DB·이미지
 - 자체 서버 설정·배포·API: [`server/README.md`](server/README.md)
 - 앱 사용법·단축키: [`trading-journal/README.md`](trading-journal/README.md)
