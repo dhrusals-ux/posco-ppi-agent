@@ -171,6 +171,56 @@ body.img-sm .shots img{
   display:block;font-size:11px;font-weight:700;letter-spacing:.3px;
   color:var(--accent);margin-bottom:4px
 }
+/* ---------- 약점 심층 분석 ---------- */
+.periods{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.periods button{
+  padding:6px 13px;border-radius:999px;border:1px solid var(--line);background:var(--panel);
+  font-size:12.5px;font-weight:600;color:var(--muted)
+}
+.periods button:hover{border-color:var(--accent);color:var(--accent)}
+.periods button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.wk{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px 18px;margin-bottom:12px;display:flex;flex-direction:column;gap:10px
+}
+.wk.sev1{border-left:3px solid var(--loss)}
+.wk.sev2{border-left:3px solid var(--warn)}
+.wk.sev3{border-left:3px solid var(--line)}
+.wk.good{border-left:3px solid var(--win)}
+.wk-head{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.wk-head h4{margin:0;font-size:15.5px;letter-spacing:-.2px;line-height:1.45;flex:1;min-width:200px}
+.wk-tag{
+  padding:3px 9px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap
+}
+.wk-tag.sev1{background:var(--loss-soft);color:var(--loss)}
+.wk-tag.sev2{background:var(--warn-soft);color:var(--warn)}
+.wk-tag.sev3{background:var(--panel-2);color:var(--muted)}
+.wk-tag.good{background:var(--win-soft);color:var(--win)}
+.wk .why{font-size:13.5px;color:var(--muted);line-height:1.7}
+.wk .why b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+.wk-nums{display:flex;gap:8px;flex-wrap:wrap}
+.wk-num{
+  background:var(--panel-2);border:1px solid var(--line-soft);border-radius:9px;
+  padding:8px 12px;min-width:110px
+}
+.wk-num .k{font-size:11px;color:var(--faint);font-weight:600;margin-bottom:2px}
+.wk-num .v{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+.wk .fix{
+  background:var(--accent-soft);border-radius:9px;padding:11px 13px;font-size:13.5px;line-height:1.65
+}
+.wk .fix b{color:var(--accent)}
+.wk-rows{display:flex;flex-direction:column;gap:4px}
+.wk-row{
+  display:grid;grid-template-columns:78px 1fr auto;gap:10px;align-items:center;
+  padding:6px 9px;border-radius:7px;font-size:12.5px;cursor:pointer
+}
+.wk-row:hover{background:var(--panel-2)}
+.wk-row .d{color:var(--muted);font-variant-numeric:tabular-nums}
+.wk-row .s{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wk-row .p{font-weight:700;font-variant-numeric:tabular-nums}
+.wk-more{font-size:12px;color:var(--faint);padding-left:9px}
+.mdd-chart{width:100%;height:150px;display:block}
+
 /* ---------- 장중 관찰 (배열 전환) ---------- */
 .align{
   display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;
@@ -458,6 +508,7 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
     <button data-view="month">월간</button>
     <button data-view="market">장중</button>
     <button data-view="lessons">시사점</button>
+    <button data-view="weak">약점</button>
     <button data-view="stats">통계</button>
   </nav>
   <div class="spacer"></div>
@@ -792,6 +843,7 @@ const state = {
   mxFilter: null,           // "역배열>정배열" 형태의 전환 필터
   bigImages: localStorage.getItem("tj-imgsize") !== "small",
   shown: {lessons:60, market:60, month:60},   // 긴 목록은 나눠서 그린다
+  period: localStorage.getItem("tj-period") || "all",   // 약점 분석 기간
   pending: [],           // 편집 중인 이미지 [{id,thumb,blob,isNew}]
   removed: []            // 편집 중 제거된 기존 이미지 id
 };
@@ -1233,13 +1285,14 @@ function render(){
 function renderView(){
   $$("#tabs button").forEach(b=>b.classList.toggle("on", b.dataset.view===state.view));
   const v = state.view;
-  const navHidden = (v==="stats" || v==="lessons" || v==="market") ? "none" : "";
+  const navHidden = ["stats","lessons","market","weak"].includes(v) ? "none" : "";
   $("#prev").style.display = $("#next").style.display = $("#btn-today").style.display = navHidden;
   if(v==="day")   renderDay();
   else if(v==="week")  renderWeek();
   else if(v==="month") renderMonth();
   else if(v==="market") renderMarket();
   else if(v==="lessons") renderLessons();
+  else if(v==="weak") renderWeakness();
   else renderStats();
 }
 function statCards(items){
@@ -1604,6 +1657,479 @@ function renderMarket(){
     : emptyBox("조건에 맞는 기록이 없습니다","필터나 검색어를 바꿔보세요.");
 
   $("#view").innerHTML = bar + matrix + body + moreBtn("market", items.length - page.length);
+}
+
+/* ---------------- 약점 심층 분석 ---------------- */
+const PERIODS = [
+  {k:"all", label:"전체",  days:0},
+  {k:"1y",  label:"최근 1년",   days:365},
+  {k:"6m",  label:"최근 6개월", days:182},
+  {k:"3m",  label:"최근 3개월", days:91},
+];
+
+function analysisSet(){
+  const days = (PERIODS.find(p=>p.k===state.period) || PERIODS[0]).days;
+  let list = state.entries.filter(e=>!e.isLesson && !e.isMarket);
+  if(days){
+    const from = ymd(addDays(new Date(), -days));
+    list = list.filter(e=>e.date >= from);
+  }
+  return list.slice().sort(cmpEntry);
+}
+
+/* 누적 손익의 최대 낙폭 */
+function drawdown(scored){
+  let cum = 0, peak = 0, worst = 0, peakAt = null, troughAt = null, curPeakAt = null, recovered = true;
+  const curve = [];
+  scored.forEach(e=>{
+    cum += e.pnl;
+    curve.push({date:e.date, v:cum});
+    if(cum >= peak){ peak = cum; curPeakAt = e.date; }
+    const dd = cum - peak;
+    if(dd < worst){ worst = dd; peakAt = curPeakAt; troughAt = e.date; }
+  });
+  if(worst < 0) recovered = cum >= peak;
+  return {mdd:worst, peakAt, troughAt, recovered, curve, final:cum};
+}
+
+/* 그룹별 집계 — 표본이 충분한 그룹만 */
+function groupStats(list, keyFn, minN){
+  const m = new Map();
+  list.forEach(e=>{
+    for(const k of [].concat(keyFn(e))){
+      if(k==null || k==="") continue;
+      if(!m.has(k)) m.set(k, []);
+      m.get(k).push(e);
+    }
+  });
+  return Array.from(m.entries())
+    .map(([k,v])=>({
+      key:k, n:v.length, items:v,
+      sum:v.reduce((a,e)=>a+e.pnl,0),
+      avg:v.reduce((a,e)=>a+e.pnl,0)/v.length,
+      wins:v.filter(e=>e.pnl>0).length,
+    }))
+    .filter(g=>g.n >= minN);
+}
+
+const HOUR_BANDS = [
+  {k:"장 초반 (~10시)",   test:h=>h < 10},
+  {k:"오전 (10~12시)",    test:h=>h >= 10 && h < 12},
+  {k:"오후 (12~14시)",    test:h=>h >= 12 && h < 14},
+  {k:"장 마감 전 (14시~)", test:h=>h >= 14},
+];
+
+/* 시사점에 반복해서 나오는 표현 (조사 제거 후 어간 비교) */
+function repeatedPhrases(lessons){
+  const stem = w => w.replace(/(은|는|이|가|을|를|에|의|도|으로|로|와|과|만|까지|부터|하자|해야|한다|했다|했었다|하기|하지)$/,"");
+  const seen = new Map();
+  lessons.forEach(e=>{
+    const words = new Set(
+      (e.lesson||"").replace(/[^\p{L}\p{N}\s]/gu," ").split(/\s+/)
+        .map(stem).filter(w=>w.length >= 2)
+    );
+    words.forEach(w=>{
+      if(!seen.has(w)) seen.set(w, []);
+      seen.get(w).push(e);
+    });
+  });
+  return Array.from(seen.entries())
+    .map(([w,items])=>({word:w, n:items.length, items}))
+    .filter(x=>x.n >= 3)
+    .sort((a,b)=>b.n-a.n);
+}
+
+/* 데이터에서 약점을 찾아낸다. 각 항목은 근거·영향 금액·처방을 가진다. */
+function analyze(list){
+  const scored = list.filter(e=>e.pnl != null);
+  const wins   = scored.filter(e=>e.pnl > 0);
+  const losses = scored.filter(e=>e.pnl < 0);
+  const sum = a => a.reduce((s,e)=>s+e.pnl, 0);
+  const avg = a => a.length ? sum(a)/a.length : 0;
+  const dd = drawdown(scored);
+
+  const base = {
+    n:list.length, scored:scored.length,
+    pnl: scored.length ? sum(scored) : null,
+    winRate: scored.length ? wins.length/scored.length*100 : null,
+    avgWin: wins.length ? avg(wins) : null,
+    avgLoss: losses.length ? avg(losses) : null,
+    payoff: (wins.length && losses.length) ? avg(wins)/Math.abs(avg(losses)) : null,
+    mdd: dd.mdd, dd,
+  };
+
+  const F = [];
+  const add = f => { if(f) F.push(f); };
+  const rows = items => items.slice().sort((a,b)=>a.pnl-b.pnl).slice(0,5);
+
+  /* 1. 손익비 — 이익은 짧게, 손실은 크게 */
+  if(wins.length >= 5 && losses.length >= 5 && base.payoff < 1){
+    const saved = Math.abs(sum(losses)) - losses.length * avg(wins);
+    add({
+      id:"payoff", sev: base.payoff < 0.7 ? 1 : 2,
+      title:"이익보다 손실을 "+(1/base.payoff).toFixed(1)+"배 크게 키웁니다",
+      why:"이긴 거래는 평균 <b>"+signed(avg(wins))+"</b>에서 정리하는데, 진 거래는 평균 <b>"+signed(avg(losses))+"</b>까지 끌고 갑니다. "+
+          "승률이 "+base.winRate.toFixed(0)+"%인 상황에서 이 구조는 계좌를 갉아먹습니다.",
+      nums:[{k:"평균 이익", v:signed(avg(wins)), c:"pos"},
+            {k:"평균 손실", v:signed(avg(losses)), c:"neg"},
+            {k:"손익비", v:base.payoff.toFixed(2)},
+            {k:"표본", v:wins.length+"승 "+losses.length+"패"}],
+      impact: saved > 0 ? saved : 0,
+      fix:"<b>손절 폭을 이익 실현 폭 이하로</b> 고정하세요. 진입 전에 손절가를 정하고, 그 값을 일지의 손절 라인으로 먼저 적은 뒤 주문하는 순서를 지키면 구조가 뒤집힙니다.",
+      items: rows(losses),
+    });
+  }
+
+  /* 2. 큰 손실 꼬리 — 손절 미준수 */
+  if(losses.length >= 5){
+    const sorted = losses.slice().sort((a,b)=>a.pnl-b.pnl);
+    const worst3 = sorted.slice(0, 3);
+    const ratio = Math.abs(sorted[0].pnl) / Math.abs(avg(losses));
+    const share = Math.abs(sum(worst3)) / Math.abs(sum(losses)) * 100;
+    if(ratio >= 3 || share >= 50){
+      add({
+        id:"tail", sev:1,
+        title:"손실 몇 건이 전체 손실의 "+share.toFixed(0)+"%를 차지합니다",
+        why:"가장 큰 손실은 <b>"+signed(sorted[0].pnl)+"</b>으로 평균 손실의 <b>"+ratio.toFixed(1)+"배</b>입니다. "+
+            "평소에는 손절을 지키다가 특정 상황에서 무너지는 전형적인 형태입니다.",
+        nums:[{k:"최대 손실", v:signed(sorted[0].pnl), c:"neg"},
+              {k:"평균 손실", v:signed(avg(losses)), c:"neg"},
+              {k:"상위 3건 합", v:signed(sum(worst3)), c:"neg"},
+              {k:"전체 손실 대비", v:share.toFixed(0)+"%"}],
+        impact: Math.abs(sum(worst3)) - 3*Math.abs(avg(losses)),
+        fix:"<b>1회 최대 손실 한도</b>를 금액으로 정해두고, 그 선에서는 이유를 따지지 말고 정리하세요. 아래 기록의 코멘트를 다시 읽어 공통 상황을 찾아보면 방아쇠가 보입니다.",
+        items: worst3,
+      });
+    }
+  }
+
+  /* 3. 손실 직후 재진입 (리벤지 트레이딩) */
+  const revenge = [], revengeIds = new Set();
+  for(let i=1; i<scored.length; i++){
+    const prev = scored[i-1], cur = scored[i];
+    if(prev.date === cur.date && prev.pnl < 0){ revenge.push(cur); revengeIds.add(cur.id); }
+  }
+  if(revenge.length >= 5){
+    const others = scored.filter(e=>!revengeIds.has(e.id));
+    const gap = avg(others) - avg(revenge);
+    if(avg(revenge) < 0 && gap > 0){
+      add({
+        id:"revenge", sev: avg(revenge) < avg(others)*0 - 1 ? 1 : 2,
+        title:"손실 직후 같은 날 재진입한 거래가 평균 "+signed(avg(revenge))+"입니다",
+        why:"같은 날 직전 거래가 손실이었던 뒤의 매매 <b>"+revenge.length+"건</b>은 평균 <b>"+signed(avg(revenge))+"</b>, "+
+            "나머지 매매는 평균 <b>"+signed(avg(others))+"</b>입니다. 손실을 즉시 만회하려는 매매가 손실을 키우고 있습니다.",
+        nums:[{k:"손실 직후 매매", v:revenge.length+"건"},
+              {k:"평균 손익", v:signed(avg(revenge)), c:"neg"},
+              {k:"그 외 평균", v:signed(avg(others)), c:cls(avg(others))},
+              {k:"차이", v:signed(-gap), c:"neg"}],
+        impact: gap * revenge.length,
+        fix:"<b>손실 후 쿨다운 규칙</b>을 만드세요. 예: 손실이 난 뒤에는 최소 30분 대기, 같은 종목은 당일 재진입 금지. 규칙을 일지 태그(#쿨다운)로 남기면 지켜졌는지 추적됩니다.",
+        items: rows(revenge),
+      });
+    }
+  }
+
+  /* 4. 과매매 — 하루 거래 수가 많은 날 */
+  const byDate = byDay(scored);
+  const dayRows = Array.from(byDate.entries()).map(([d,v])=>({date:d, n:v.length, sum:sum(v), items:v}));
+  if(dayRows.length >= 6){
+    const counts = dayRows.map(d=>d.n).sort((a,b)=>a-b);
+    const med = counts[Math.floor(counts.length/2)];
+    const thr = Math.max(3, med + 1);
+    const many = dayRows.filter(d=>d.n >= thr), few = dayRows.filter(d=>d.n < thr);
+    if(many.length >= 3 && few.length >= 3){
+      const mAvg = many.reduce((a,d)=>a+d.sum,0)/many.length;
+      const fAvg = few.reduce((a,d)=>a+d.sum,0)/few.length;
+      if(mAvg < fAvg && mAvg < 0){
+        add({
+          id:"overtrade", sev:2,
+          title:"하루 "+thr+"건 이상 매매한 날은 평균 "+signed(mAvg)+"입니다",
+          why:"거래가 몰린 날 <b>"+many.length+"일</b>의 하루 평균은 <b>"+signed(mAvg)+"</b>, "+
+              "그렇지 않은 날 <b>"+few.length+"일</b>은 <b>"+signed(fAvg)+"</b>입니다. 기회를 늘리는 것이 아니라 손실을 늘리고 있습니다.",
+          nums:[{k:"많이 한 날", v:many.length+"일"},
+                {k:"그 날 평균", v:signed(mAvg), c:"neg"},
+                {k:"적게 한 날 평균", v:signed(fAvg), c:cls(fAvg)},
+                {k:"하루 중앙값", v:med+"건"}],
+          impact: (fAvg - mAvg) * many.length,
+          fix:"<b>하루 최대 매매 횟수</b>를 "+Math.max(2, med)+"건으로 제한해 보세요. 한도를 넘기려는 순간이 대개 계획에 없던 매매입니다.",
+          items: rows(many.flatMap(d=>d.items)),
+        });
+      }
+    }
+  }
+
+  /* 5. 요일 약점 */
+  const dowStats = groupStats(scored, e=>DOW[(parseYmd(e.date).getDay()+6)%7]+"요일", 5);
+  const worstDow = dowStats.slice().sort((a,b)=>a.sum-b.sum)[0];
+  if(worstDow && worstDow.sum < 0 && dowStats.length >= 3){
+    add({
+      id:"dow", sev:3,
+      title:worstDow.key+"에 유독 약합니다",
+      why:"<b>"+worstDow.key+"</b> 매매 "+worstDow.n+"건의 합계는 <b>"+signed(worstDow.sum)+"</b>, "+
+          "승률은 "+(worstDow.wins/worstDow.n*100).toFixed(0)+"%입니다.",
+      nums:[{k:"합계", v:signed(worstDow.sum), c:"neg"},
+            {k:"거래 수", v:worstDow.n+"건"},
+            {k:"승률", v:(worstDow.wins/worstDow.n*100).toFixed(0)+"%"},
+            {k:"평균", v:signed(worstDow.avg), c:cls(worstDow.avg)}],
+      impact: Math.abs(worstDow.sum),
+      fix:"이 요일의 기록을 몰아서 읽어보세요. 특정 요일의 시장 성격보다는 <b>그날의 컨디션·일정</b>이 원인인 경우가 많습니다.",
+      items: rows(worstDow.items),
+    });
+  }
+
+  /* 6. 시간대 약점 */
+  const timed = scored.filter(e=>/^\d{2}:/.test(e.time||""));
+  if(timed.length >= 10){
+    const bands = groupStats(timed, e=>{
+      const h = parseInt(e.time.slice(0,2), 10);
+      const b = HOUR_BANDS.find(x=>x.test(h));
+      return b ? b.k : null;
+    }, 5);
+    const worstBand = bands.slice().sort((a,b)=>a.avg-b.avg)[0];
+    if(worstBand && worstBand.sum < 0 && bands.length >= 2){
+      add({
+        id:"hour", sev:2,
+        title:worstBand.key+" 매매의 합계가 "+signed(worstBand.sum)+"입니다",
+        why:"이 시간대 <b>"+worstBand.n+"건</b>의 평균은 <b>"+signed(worstBand.avg)+"</b>로, 다른 시간대보다 뚜렷하게 나쁩니다.",
+        nums:[{k:"시간대", v:worstBand.key},
+              {k:"합계", v:signed(worstBand.sum), c:"neg"},
+              {k:"거래 수", v:worstBand.n+"건"},
+              {k:"승률", v:(worstBand.wins/worstBand.n*100).toFixed(0)+"%"}],
+        impact: Math.abs(worstBand.sum),
+        fix:"이 시간대에는 <b>관망을 기본값</b>으로 두고, 진입하려면 평소보다 한 단계 엄격한 조건을 요구하세요.",
+        items: rows(worstBand.items),
+      });
+    }
+  }
+
+  /* 7. 손해 보는 전략(태그) */
+  const tagStats = groupStats(scored, e=>e.tags||[], 4).sort((a,b)=>a.sum-b.sum);
+  if(tagStats.length && tagStats[0].sum < 0){
+    const t = tagStats[0];
+    add({
+      id:"tag", sev: t.sum < -Math.abs(base.avgLoss||0)*3 ? 1 : 2,
+      title:"#"+t.key+" 매매가 누적 "+signed(t.sum)+"입니다",
+      why:"이 태그가 붙은 <b>"+t.n+"건</b>의 승률은 "+(t.wins/t.n*100).toFixed(0)+"%, 평균은 <b>"+signed(t.avg)+"</b>입니다. "+
+          "전략 자체가 손실을 내고 있는지, 실행이 흔들리는지 구분해야 합니다.",
+      nums:[{k:"태그", v:"#"+esc(t.key)},
+            {k:"합계", v:signed(t.sum), c:"neg"},
+            {k:"거래 수", v:t.n+"건"},
+            {k:"평균", v:signed(t.avg), c:cls(t.avg)}],
+      impact: Math.abs(t.sum),
+      fix:"이 전략은 <b>한 달간 중단하거나 수량을 절반으로</b> 줄이고 기록만 남겨보세요. 같은 조건에서 결과가 반복되면 전략을 버리는 것이 맞습니다.",
+      items: rows(t.items),
+    });
+  }
+
+  /* 8. 반복해서 지는 종목 */
+  const symStats = groupStats(scored, e=>e.symbol, 4).sort((a,b)=>a.sum-b.sum);
+  if(symStats.length && symStats[0].sum < 0){
+    const sy = symStats[0];
+    add({
+      id:"symbol", sev:2,
+      title:esc(sy.key)+" 종목에서 계속 지고 있습니다",
+      why:"<b>"+esc(sy.key)+"</b> "+sy.n+"건의 합계는 <b>"+signed(sy.sum)+"</b>, 승률 "+(sy.wins/sy.n*100).toFixed(0)+"%입니다. "+
+          "익숙하다는 느낌과 실제 성과가 어긋나는 대표적인 자리입니다.",
+      nums:[{k:"종목", v:esc(sy.key)},
+            {k:"합계", v:signed(sy.sum), c:"neg"},
+            {k:"거래 수", v:sy.n+"건"},
+            {k:"평균", v:signed(sy.avg), c:cls(sy.avg)}],
+      impact: Math.abs(sy.sum),
+      fix:"이 종목은 <b>관찰 목록으로만</b> 두고 당분간 진입하지 마세요. 장중 관찰 탭에 배열 변화만 기록하며 패턴을 파악하는 편이 낫습니다.",
+      items: rows(sy.items),
+    });
+  }
+
+  /* 9. 방향 편향 (롱/숏) */
+  const longs = scored.filter(e=>e.side !== "short"), shorts = scored.filter(e=>e.side === "short");
+  if(longs.length >= 5 && shorts.length >= 5){
+    const weak = avg(longs) < avg(shorts) ? {n:"롱(매수)", g:longs, o:shorts} : {n:"숏(매도)", g:shorts, o:longs};
+    if(avg(weak.g) < 0){
+      add({
+        id:"side", sev:2,
+        title:weak.n+" 방향에서만 손실이 납니다",
+        why:"<b>"+weak.n+"</b> "+weak.g.length+"건 평균 <b>"+signed(avg(weak.g))+"</b>, 반대 방향 "+weak.o.length+"건 평균 <b>"+signed(avg(weak.o))+"</b>입니다.",
+        nums:[{k:weak.n, v:signed(sum(weak.g)), c:"neg"},
+              {k:"반대 방향", v:signed(sum(weak.o)), c:cls(sum(weak.o))},
+              {k:"거래 수", v:weak.g.length+"건"},
+              {k:"승률", v:(weak.g.filter(e=>e.pnl>0).length/weak.g.length*100).toFixed(0)+"%"}],
+        impact: Math.abs(sum(weak.g)),
+        fix:"한쪽 방향만 계속 진다면 <b>그 방향의 진입 조건이 반대 방향만큼 정교하지 않다</b>는 뜻입니다. 잘 되는 쪽의 조건을 글로 적어 그대로 옮겨 적용해 보세요.",
+        items: rows(weak.g),
+      });
+    }
+  }
+
+  /* 10. 자기 평가와 결과의 괴리 */
+  const high = scored.filter(e=>e.rating >= 4), low = scored.filter(e=>e.rating >= 1 && e.rating <= 2);
+  if(high.length >= 5 && low.length >= 5 && avg(high) < avg(low)){
+    add({
+      id:"rating", sev:2,
+      title:"스스로 잘했다고 평가한 매매가 오히려 성과가 나쁩니다",
+      why:"★4~5로 적은 <b>"+high.length+"건</b>의 평균은 <b>"+signed(avg(high))+"</b>인데, ★1~2로 적은 "+low.length+"건은 <b>"+signed(avg(low))+"</b>입니다. "+
+          "매매 직후의 자기 평가 기준이 결과와 어긋나 있습니다.",
+      nums:[{k:"★4~5 평균", v:signed(avg(high)), c:cls(avg(high))},
+            {k:"★1~2 평균", v:signed(avg(low)), c:cls(avg(low))},
+            {k:"표본", v:high.length+" / "+low.length+"건"}],
+      impact: (avg(low) - avg(high)) * high.length,
+      fix:"평가 기준을 <b>결과가 아니라 과정</b>으로 바꾸세요. 계획대로 진입했는가, 손절을 지켰는가만으로 별점을 매기면 기준이 흔들리지 않습니다.",
+      items: rows(high),
+    });
+  }
+
+  /* 11. 최대 낙폭 */
+  if(dd.mdd < 0 && scored.length >= 10){
+    add({
+      id:"mdd", sev: Math.abs(dd.mdd) > Math.abs(base.pnl||0) ? 1 : 3,
+      title:"고점 대비 최대 "+signed(dd.mdd)+"까지 밀렸습니다",
+      why:"<b>"+dd.peakAt+"</b> 고점에서 <b>"+dd.troughAt+"</b>까지 누적 손익이 <b>"+signed(dd.mdd)+"</b> 줄었습니다. "+
+          (dd.recovered ? "이후 고점을 회복했습니다." : "아직 그 고점을 회복하지 못했습니다."),
+      nums:[{k:"최대 낙폭", v:signed(dd.mdd), c:"neg"},
+            {k:"시작", v:dd.peakAt || "—"},
+            {k:"저점", v:dd.troughAt || "—"},
+            {k:"회복", v: dd.recovered ? "완료" : "미회복"}],
+      impact: 0,
+      fix:"낙폭 구간의 일지를 연속으로 읽어보세요. <b>낙폭은 대개 한 번의 사고가 아니라 규칙이 느슨해진 며칠</b>에서 만들어집니다.",
+      items: [],
+    });
+  }
+
+  /* 12. 같은 다짐의 반복 */
+  const days = (PERIODS.find(p=>p.k===state.period) || PERIODS[0]).days;
+  const from = days ? ymd(addDays(new Date(), -days)) : "";
+  const lessonEntries = state.entries
+    .filter(e=>(e.lesson||"").trim())
+    .filter(e=>!from || e.date >= from);
+  const rep = repeatedPhrases(lessonEntries);
+  if(rep.length){
+    const r = rep[0];
+    add({
+      id:"repeat", sev:2,
+      title:"‘"+esc(r.word)+"’ 관련 다짐을 "+r.n+"번 반복해서 적었습니다",
+      why:"서로 다른 시사점 <b>"+r.n+"개</b>에 같은 표현이 등장합니다. 문제를 인지하고 있지만 행동이 바뀌지 않았다는 신호입니다."+
+          (rep[1] ? " 그다음으로는 ‘"+esc(rep[1].word)+"’("+rep[1].n+"회)입니다." : ""),
+      nums: rep.slice(0,4).map(x=>({k:"반복 표현", v:esc(x.word)+" "+x.n+"회"})),
+      impact: 0,
+      fix:"다짐을 <b>확인 가능한 규칙</b>으로 바꾸세요. ‘조심하자’ 대신 ‘진입 전 손절가를 일지에 먼저 적는다’처럼, 지켰는지 O/X로 답할 수 있어야 행동이 바뀝니다.",
+      items: [],
+    });
+  }
+
+  /* 13. 복기 습관 */
+  if(list.length >= 10){
+    const noComment = list.filter(e=>!(e.comment||"").trim()).length;
+    const noLesson  = list.filter(e=>!(e.lesson||"").trim()).length;
+    const noImage   = list.filter(e=>!(e.images||[]).length).length;
+    const rate = noComment/list.length*100;
+    if(rate >= 30 || noLesson/list.length*100 >= 70){
+      add({
+        id:"habit", sev:3,
+        title:"기록이 비어 있는 일지가 많습니다",
+        why:"전체 "+list.length+"건 중 코멘트 없음 <b>"+noComment+"건</b>, 시사점 없음 <b>"+noLesson+"건</b>, 차트 없음 <b>"+noImage+"건</b>입니다. "+
+            "근거가 없는 기록은 나중에 원인을 찾을 수 없습니다.",
+        nums:[{k:"코멘트 없음", v:noComment+"건 ("+rate.toFixed(0)+"%)"},
+              {k:"시사점 없음", v:noLesson+"건"},
+              {k:"차트 없음", v:noImage+"건"}],
+        impact: 0,
+        fix:"진입 근거 한 줄과 차트 한 장만이라도 남기세요. <b>Ctrl+V로 캡처를 붙여넣는 데 3초</b>면 됩니다.",
+        items: [],
+      });
+    }
+  }
+
+  /* 강점 — 유지할 것 */
+  const G = [];
+  const bestTag = tagStats.slice().sort((a,b)=>b.sum-a.sum)[0];
+  if(bestTag && bestTag.sum > 0){
+    G.push({
+      id:"best-tag", title:"#"+esc(bestTag.key)+" 매매는 누적 "+signed(bestTag.sum)+"입니다",
+      why:bestTag.n+"건, 승률 "+(bestTag.wins/bestTag.n*100).toFixed(0)+"%. 잘 되는 자리이니 <b>비중을 여기에 모으는 편</b>이 낫습니다.",
+    });
+  }
+  if(wins.length >= 5 && losses.length >= 5 && base.payoff >= 1.5){
+    G.push({
+      id:"payoff-good", title:"손익비 "+base.payoff.toFixed(2)+"로 이익을 손실보다 크게 가져갑니다",
+      why:"평균 이익 <b>"+signed(avg(wins))+"</b> vs 평균 손실 <b>"+signed(avg(losses))+"</b>. 승률이 낮아도 살아남는 구조입니다.",
+    });
+  }
+  const lessonRate = list.length ? list.filter(e=>(e.lesson||"").trim()).length/list.length*100 : 0;
+  if(list.length >= 10 && lessonRate >= 50){
+    G.push({
+      id:"lesson-good", title:"일지의 "+lessonRate.toFixed(0)+"%에 시사점을 남겼습니다",
+      why:"복기가 습관으로 자리잡았습니다. 이 기록이 쌓일수록 이 분석도 정확해집니다.",
+    });
+  }
+
+  F.sort((a,b)=> (a.sev - b.sev) || (Math.abs(b.impact||0) - Math.abs(a.impact||0)));
+  return {base, findings:F, strengths:G};
+}
+
+function wkCard(f){
+  const sevLabel = {1:"심각", 2:"주의", 3:"점검"}[f.sev] || "점검";
+  return ''+
+  '<div class="wk sev'+f.sev+'">'+
+    '<div class="wk-head"><h4>'+f.title+'</h4>'+
+      '<span class="wk-tag sev'+f.sev+'">'+sevLabel+'</span></div>'+
+    '<div class="why">'+f.why+'</div>'+
+    (f.nums && f.nums.length
+      ? '<div class="wk-nums">'+f.nums.map(n=>'<div class="wk-num"><div class="k">'+n.k+'</div>'+
+          '<div class="v '+(n.c||"")+'">'+n.v+'</div></div>').join("")+'</div>' : "")+
+    (f.impact > 0
+      ? '<div class="why">이 패턴이 없었다면 손익이 <b class="pos">'+signed(f.impact)+'</b> 달랐을 것으로 추정됩니다.</div>' : "")+
+    '<div class="fix">💡 '+f.fix+'</div>'+
+    (f.items && f.items.length
+      ? '<div class="wk-rows">'+f.items.map(e=>
+          '<div class="wk-row" data-date="'+e.date+'">'+
+            '<span class="d">'+e.date.slice(5)+'</span>'+
+            '<span class="s">'+esc(e.symbol||"")+(e.comment?' <span style="color:var(--faint)">· '+esc(e.comment.slice(0,28))+'</span>':"")+'</span>'+
+            '<span class="p '+cls(e.pnl)+'">'+signed(e.pnl)+'</span>'+
+          '</div>').join("")+
+        '<div class="wk-more">날짜를 누르면 해당 일지로 이동합니다</div></div>' : "")+
+  '</div>';
+}
+
+function renderWeakness(){
+  const list = analysisSet();
+  const {base, findings, strengths} = analyze(list);
+  const periodLabel = (PERIODS.find(p=>p.k===state.period)||PERIODS[0]).label;
+
+  period("약점 심층 분석", periodLabel+" · 매매 "+list.length+"건 기준");
+  statCards([
+    {k:"분석 대상", v:base.scored+"건", x:list.length+"건 중 손익 입력"},
+    {k:"순손익", v:signed(base.pnl), c:cls(base.pnl)},
+    {k:"승률", v:base.winRate==null?"—":base.winRate.toFixed(0)+"%"},
+    {k:"손익비", v:base.payoff==null?"—":base.payoff.toFixed(2),
+      x:base.payoff==null?"":(base.payoff<1?"손실이 더 큼":"이익이 더 큼")},
+    {k:"최대 낙폭", v:base.mdd?signed(base.mdd):"—", c:base.mdd?"neg":""},
+  ]);
+
+  const chips = '<div class="periods">'+PERIODS.map(p=>
+    '<button data-period="'+p.k+'"'+(state.period===p.k?' class="on"':'')+'>'+p.label+'</button>').join("")+'</div>';
+
+  if(base.scored < 5){
+    $("#view").innerHTML = chips + emptyBox("분석할 기록이 아직 적습니다",
+      "손익을 입력한 매매가 <b>5건 이상</b> 쌓이면 손익비·손절 습관·시간대별 약점을 찾아냅니다. "+
+      "현재 "+base.scored+"건입니다.",
+      '<button class="btn primary" id="empty-new">+ 일지 쓰기</button>');
+    return;
+  }
+
+  const body = findings.length
+    ? findings.map(wkCard).join("")
+    : emptyBox("뚜렷한 약점 패턴이 잡히지 않았습니다",
+        "표본이 더 쌓이거나, 지금 방식이 잘 유지되고 있다는 뜻입니다. 기간을 바꿔 다시 살펴보세요.");
+
+  const good = strengths.length
+    ? '<div class="panel"><h3>✅ 유지할 강점</h3>'+strengths.map(g=>
+        '<div class="wk good"><div class="wk-head"><h4>'+g.title+'</h4>'+
+        '<span class="wk-tag good">강점</span></div><div class="why">'+g.why+'</div></div>').join("")+'</div>'
+    : "";
+
+  $("#view").innerHTML = chips +
+    '<div style="margin-bottom:14px;color:var(--muted);font-size:13px">'+
+      '기록된 데이터에서 <b style="color:var(--text)">손실에 기여한 패턴</b>을 찾아 심각도 순으로 정리했습니다. '+
+      '표본이 적은 항목은 제외됩니다.</div>' +
+    body + good;
 }
 
 /* ---------------- view: 시사점 (누적 보관) ---------------- */
@@ -2172,6 +2698,13 @@ $("#view").addEventListener("click", e=>{
     }
     return;
   }
+  const per = e.target.closest("[data-period]");
+  if(per){
+    state.period = per.dataset.period;
+    localStorage.setItem("tj-period", state.period);
+    render();
+    return;
+  }
   const more = e.target.closest("[data-more]");
   if(more){
     const k = more.dataset.more;
@@ -2357,8 +2890,8 @@ document.addEventListener("keydown", e=>{
   else if(e.key==="ArrowLeft") shiftCursor(-1);
   else if(e.key==="ArrowRight") shiftCursor(1);
   else if(e.key==="t" || e.key==="T"){ state.cursor=new Date(); render(); }
-  else if(["1","2","3","4","5","6"].includes(e.key)){
-    state.view = ["day","week","month","market","lessons","stats"][+e.key-1];
+  else if(["1","2","3","4","5","6","7"].includes(e.key)){
+    state.view = ["day","week","month","market","lessons","weak","stats"][+e.key-1];
     localStorage.setItem("tj-view", state.view); render();
   }
 });
