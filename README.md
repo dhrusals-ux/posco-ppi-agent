@@ -165,13 +165,14 @@ posco-ppi-agent/
 | 방식 | 저장 위치 | 준비 |
 |---|---|---|
 | ☁️ **클라우드 모드** (무료·여러 기기 동기화) | Supabase 무료 플랜 | [`supabase/README.md`](supabase/README.md) — 10분 설정 |
-| 🖥 **자체 서버 모드** | 내 서버의 SQLite (`server/`, FastAPI) | `uvicorn server.main:app --host 0.0.0.0 --port 8000` |
+| 🖥 **자체 서버 모드** | 내 서버의 SQLite 또는 PostgreSQL (`server/`, FastAPI) | `docker compose up -d` 또는 `uvicorn server.main:app --port 8000` |
 | 💾 **브라우저 모드** (서버 불필요) | 접속한 브라우저(IndexedDB) | `trading-journal/index.html` 열기 · GitHub Pages |
 
+- 서버 배포 + DB 구축: [`docs/DEPLOY-SERVER.md`](docs/DEPLOY-SERVER.md) — Supabase 직결 / Render+PostgreSQL / docker compose
 - 접속 주소(배포): [`docs/DEPLOY-VERCEL.md`](docs/DEPLOY-VERCEL.md) — Vercel에 화면 올리기
 - 상업 서비스 필수 문서(약관·개인정보처리방침·환불정책 초안): [`docs/legal/`](docs/legal/)
 - 독립 저장소 트리 생성: `python tools/make-standalone.py`
-- 전체 검증(브라우저 자동화 12종): `bash tests/run.sh` — [`tests/README.md`](tests/README.md)
+- 전체 검증(브라우저 자동화 14종, SQLite·PostgreSQL 양쪽): `bash tests/run.sh` — [`tests/README.md`](tests/README.md)
 - 무료 클라우드 설정: [`supabase/README.md`](supabase/README.md) — 로그인·DB·이미지
 - 자체 서버 설정·배포·API: [`server/README.md`](server/README.md)
 - 앱 사용법·단축키: [`trading-journal/README.md`](trading-journal/README.md)

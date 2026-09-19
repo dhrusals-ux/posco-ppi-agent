@@ -88,9 +88,11 @@ Supabase(무료) 프로젝트에 연결하면 로그인 후 어느 기기에서 
 
 ### 🖥 자체 서버 모드 — 내 서버에 직접 저장
 `server/` 의 FastAPI 서버를 띄우고 그 주소로 접속하면 자동으로 서버 모드가 됩니다.
-아이디/비밀번호로 로그인하며, 일지와 차트 이미지가 서버 DB(SQLite)에 저장되어
-PC·휴대폰 어디서 접속해도 동일한 기록이 보입니다. 설정과 배포 방법은
-[`server/README.md`](../server/README.md) 참고.
+아이디/비밀번호로 로그인하며, 일지와 차트 이미지가 서버 DB에 저장되어
+PC·휴대폰 어디서 접속해도 동일한 기록이 보입니다.
+DB는 기본 SQLite 파일이고, `DATABASE_URL` 을 주면 PostgreSQL 로 바뀝니다.
+설정은 [`server/README.md`](../server/README.md),
+배포 방법(Render·Fly·docker compose)은 [`docs/DEPLOY-SERVER.md`](../docs/DEPLOY-SERVER.md) 참고.
 
 ```bash
 pip install -r server/requirements.txt

@@ -35,7 +35,7 @@ if [ ! -d node_modules/playwright-core ] && [ ! -d "$HOME/node_modules/playwrigh
     echo "✗ playwright-core 설치 실패 — 수동으로 npm i playwright-core 후 다시 실행하세요"; exit 1; }
 fi
 
-for port in 8010 8020 8030; do
+for port in 8010 8020 8030 8061; do
   if (exec 3<>/dev/tcp/127.0.0.1/$port) 2>/dev/null; then
     exec 3>&- 3<&-
     echo "✗ 포트 $port 를 이미 사용 중입니다. 해당 프로세스를 종료한 뒤 다시 실행하세요."
@@ -43,9 +43,28 @@ for port in 8010 8020 8030; do
   fi
 done
 
-echo "▶ 서버 기동"
+if [ -n "${TJ_TEST_DATABASE_URL:-}" ]; then
+  echo "▶ 서버 기동 (DB: PostgreSQL)"
+  python3 -c "import psycopg" 2>/dev/null || pip install -q "psycopg[binary]" psycopg-pool || {
+    echo "✗ psycopg 설치 실패"; exit 1; }
+  # 남아 있는 계정이 있으면 테스트가 서로 충돌한다 — 반드시 빈 DB 로 돌린다
+  python3 - "$TJ_TEST_DATABASE_URL" <<'EOF' || exit 1
+import sys, psycopg
+with psycopg.connect(sys.argv[1]) as c:
+    n = c.execute("select count(*) from users").fetchone()[0] if c.execute(
+        "select to_regclass('public.users')").fetchone()[0] else 0
+if n:
+    print(f"✗ 테스트용 DB 에 계정이 {n}개 남아 있습니다. 빈 DB 를 쓰세요:")
+    print("    psql \"$TJ_TEST_DATABASE_URL\" -c 'drop schema public cascade; create schema public;'")
+    sys.exit(1)
+EOF
+else
+  echo "▶ 서버 기동 (DB: SQLite)"
+fi
 python3 -m http.server 8030 --directory trading-journal >"$TMP/static.log" 2>&1 &            PIDS+=($!)
 python3 tests/mock-supabase.py                          >"$TMP/mock.log"   2>&1 &            PIDS+=($!)
+# TJ_TEST_DATABASE_URL 을 주면 SQLite 대신 실제 PostgreSQL 로 같은 검증을 돌린다
+DATABASE_URL="${TJ_TEST_DATABASE_URL:-}" \
 TJ_DB="$TMP/server.db" TJ_SECRET=test-secret-please-change TJ_ALLOW_REGISTER=1 \
   python3 -m uvicorn server.main:app --host 127.0.0.1 --port 8010 >"$TMP/server.log" 2>&1 &  PIDS+=($!)
 
@@ -55,6 +74,16 @@ for i in $(seq 1 30); do
   sleep 0.5
 done
 
+fail=0
+if [ $# -eq 0 ]; then
+  printf '  %-22s ' "db-persistence"
+  if out=$(timeout 180 python3 tests/db-persistence.py 2>&1); then
+    echo "PASS"
+  else
+    echo "FAIL"; echo "$out" | tail -8 | sed 's/^/      /'; fail=1
+  fi
+fi
+
 FILES=()
 if [ $# -gt 0 ]; then
   for a in "$@"; do FILES+=("tests/browser/${a%.mjs}.mjs"); done
@@ -63,7 +92,6 @@ else
   for f in tests/browser/*.mjs; do [ "$(basename "$f")" = "standalone-tree.mjs" ] || FILES+=("$f"); done
 fi
 
-fail=0
 for f in "${FILES[@]}"; do
   name=$(basename "$f" .mjs)
   printf '  %-22s ' "$name"

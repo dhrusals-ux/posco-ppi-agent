@@ -1,0 +1,36 @@
+# Render 블루프린트 — 서버 + PostgreSQL 을 한 번에 만든다.
+#
+#   1) 이 저장소를 Render 에 연결: https://dashboard.render.com/blueprints → New Blueprint Instance
+#   2) render.yaml 이 자동 인식되면 Apply
+#   3) 첫 접속에서 만든 계정이 관리자 계정이 된다 (TJ_ALLOW_REGISTER=auto)
+#
+# 무료 플랜 주의: 15분간 요청이 없으면 서버가 잠들고, 다음 접속이 30초쯤 느립니다.
+# 무료 PostgreSQL 은 생성 후 30일이 지나면 만료되므로, 계속 쓸 계획이면
+# Supabase/Neon 의 무료 PostgreSQL URL 을 DATABASE_URL 에 직접 넣는 편이 안전합니다.
+services:
+  - type: web
+    name: ch-trading
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: TJ_SECRET
+        generateValue: true          # Render 가 임의의 긴 키를 만들어 준다
+      - key: TJ_ALLOW_REGISTER
+        value: auto                  # 첫 계정만 가입 허용
+      - key: TJ_SESSION_DAYS
+        value: "30"
+      - key: TJ_MAX_IMAGE_MB
+        value: "8"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ch-trading-db
+          property: connectionString
+
+databases:
+  - name: ch-trading-db
+    plan: free
+    databaseName: tjdb
+    user: tj

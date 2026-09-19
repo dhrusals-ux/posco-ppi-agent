@@ -1,9 +1,13 @@
 """
-매매일지 서버 (FastAPI + SQLite)
+매매일지 서버 (FastAPI + SQLite/PostgreSQL)
 
 - 계정별로 일지/차트 이미지를 서버 DB에 저장합니다. 어느 기기에서 접속해도 같은 기록이 보입니다.
 - 프런트엔드(trading-journal/index.html)를 그대로 서빙하며, 프런트는 서버가 있으면
   서버 모드, 없으면(파일로 직접 열기 등) 브라우저 저장 모드로 자동 전환됩니다.
+
+DB는 DATABASE_URL 환경변수로 고릅니다.
+    (없음)                       → SQLite 파일 (TJ_DB, 개인용)
+    postgresql://user:pw@host/db → PostgreSQL (Supabase / Neon / Render / 자체 호스팅)
 
 실행:
     pip install -r server/requirements.txt
@@ -18,7 +22,6 @@ import hmac
 import json
 import os
 import secrets
-import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -28,6 +31,8 @@ from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, Up
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+
+from .dbx import Conn, Row, backend, connect, schema
 
 # --------------------------------------------------------------------------- 설정
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,73 +53,30 @@ app = FastAPI(title="매매일지 API", docs_url="/api/docs", openapi_url="/api/
 
 # --------------------------------------------------------------------------- DB
 @contextmanager
-def db() -> Iterator[sqlite3.Connection]:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DB_PATH, timeout=15)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA foreign_keys=ON")
-    try:
+def db() -> Iterator[Conn]:
+    with connect(DB_PATH) as con:
         yield con
-        con.commit()
-    finally:
-        con.close()
 
 
 def init_db() -> None:
     with db() as con:
-        con.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                username   TEXT UNIQUE NOT NULL,
-                pw_hash    TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS entries (
-                id         TEXT PRIMARY KEY,
-                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                date       TEXT NOT NULL,
-                time       TEXT,
-                symbol     TEXT NOT NULL,
-                side       TEXT,
-                entry      REAL, exit REAL, qty REAL, fee REAL,
-                pnl        REAL, pnl_pct REAL,
-                tags       TEXT, comment TEXT, lesson TEXT, rating INTEGER,
-                is_lesson  INTEGER NOT NULL DEFAULT 0,
-                is_market  INTEGER NOT NULL DEFAULT 0,
-                align_from TEXT DEFAULT '', align_to TEXT DEFAULT '',
-                images     TEXT,
-                created_at TEXT, updated_at TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_entries_user_date ON entries(user_id, date);
-            CREATE TABLE IF NOT EXISTS images (
-                id         TEXT PRIMARY KEY,
-                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                mime       TEXT NOT NULL,
-                data       BLOB NOT NULL,
-                thumb      BLOB,
-                created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_images_user ON images(user_id);
-            """
-        )
+        con.executescript(schema())
 
 
 def migrate_db() -> None:
     """이전 버전 DB에 새 컬럼을 더한다."""
     with db() as con:
-        cols = {r["name"] for r in con.execute("PRAGMA table_info(entries)").fetchall()}
-        if "lesson" not in cols:
-            con.execute("ALTER TABLE entries ADD COLUMN lesson TEXT DEFAULT ''")
-        if "is_lesson" not in cols:
-            con.execute("ALTER TABLE entries ADD COLUMN is_lesson INTEGER NOT NULL DEFAULT 0")
-        if "is_market" not in cols:
-            con.execute("ALTER TABLE entries ADD COLUMN is_market INTEGER NOT NULL DEFAULT 0")
-        if "align_from" not in cols:
-            con.execute("ALTER TABLE entries ADD COLUMN align_from TEXT DEFAULT ''")
-        if "align_to" not in cols:
-            con.execute("ALTER TABLE entries ADD COLUMN align_to TEXT DEFAULT ''")
+        cols = con.columns("entries")
+        adds = {
+            "lesson": "ALTER TABLE entries ADD COLUMN lesson TEXT DEFAULT ''",
+            "is_lesson": "ALTER TABLE entries ADD COLUMN is_lesson INTEGER NOT NULL DEFAULT 0",
+            "is_market": "ALTER TABLE entries ADD COLUMN is_market INTEGER NOT NULL DEFAULT 0",
+            "align_from": "ALTER TABLE entries ADD COLUMN align_from TEXT DEFAULT ''",
+            "align_to": "ALTER TABLE entries ADD COLUMN align_to TEXT DEFAULT ''",
+        }
+        for col, ddl in adds.items():
+            if col not in cols:
+                con.execute(ddl)
 
 
 init_db()
@@ -160,7 +122,7 @@ def read_token(token: str) -> Optional[int]:
         return None
 
 
-def current_user(request: Request) -> sqlite3.Row:
+def current_user(request: Request) -> Row:
     token = request.cookies.get(COOKIE, "")
     uid = read_token(token) if token else None
     if uid is None:
@@ -224,7 +186,7 @@ class Entry(BaseModel):
     updatedAt: Optional[str] = None
 
 
-def row_to_entry(r: sqlite3.Row) -> dict[str, Any]:
+def row_to_entry(r: Row) -> dict[str, Any]:
     return {
         "id": r["id"], "date": r["date"], "time": r["time"] or "", "symbol": r["symbol"],
         "side": r["side"] or "long", "entry": r["entry"], "exit": r["exit"], "qty": r["qty"],
@@ -241,11 +203,11 @@ def row_to_entry(r: sqlite3.Row) -> dict[str, Any]:
 # --------------------------------------------------------------------------- 인증 API
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "mode": "server", "registrationOpen": registration_open()}
+    return {"ok": True, "mode": "server", "db": backend(), "registrationOpen": registration_open()}
 
 
 @app.get("/api/me")
-def me(user: sqlite3.Row = Depends(current_user)) -> dict[str, Any]:
+def me(user: Row = Depends(current_user)) -> dict[str, Any]:
     return {"username": user["username"], "createdAt": user["created_at"]}
 
 
@@ -257,11 +219,10 @@ def register(body: Credentials, request: Request, response: Response) -> dict[st
     with db() as con:
         if con.execute("SELECT 1 FROM users WHERE username=?", (username,)).fetchone():
             raise HTTPException(409, "이미 사용 중인 아이디입니다")
-        cur = con.execute(
+        uid = con.insert_id(
             "INSERT INTO users (username, pw_hash, created_at) VALUES (?,?,?)",
             (username, hash_password(body.password), now()),
         )
-        uid = int(cur.lastrowid)
     set_session_cookie(response, request, uid)
     return {"username": username}
 
@@ -284,7 +245,7 @@ def logout(response: Response) -> dict[str, bool]:
 
 
 @app.post("/api/auth/password")
-def change_password(body: Credentials, user: sqlite3.Row = Depends(current_user)) -> dict[str, bool]:
+def change_password(body: Credentials, user: Row = Depends(current_user)) -> dict[str, bool]:
     """현재 로그인한 계정의 비밀번호를 변경합니다. username 자리에 현재 비밀번호를 보냅니다."""
     if not verify_password(body.username, user["pw_hash"]):
         raise HTTPException(401, "현재 비밀번호가 올바르지 않습니다")
@@ -295,7 +256,7 @@ def change_password(body: Credentials, user: sqlite3.Row = Depends(current_user)
 
 # --------------------------------------------------------------------------- 일지 API
 @app.get("/api/entries")
-def list_entries(user: sqlite3.Row = Depends(current_user)) -> list[dict[str, Any]]:
+def list_entries(user: Row = Depends(current_user)) -> list[dict[str, Any]]:
     with db() as con:
         rows = con.execute(
             "SELECT * FROM entries WHERE user_id=? ORDER BY date, time", (user["id"],)
@@ -303,7 +264,7 @@ def list_entries(user: sqlite3.Row = Depends(current_user)) -> list[dict[str, An
     return [row_to_entry(r) for r in rows]
 
 
-def _owned_images(con: sqlite3.Connection, user_id: int, ids: list[str]) -> list[str]:
+def _owned_images(con: Conn, user_id: int, ids: list[str]) -> list[str]:
     if not ids:
         return []
     marks = ",".join("?" * len(ids))
@@ -315,7 +276,7 @@ def _owned_images(con: sqlite3.Connection, user_id: int, ids: list[str]) -> list
 
 
 @app.put("/api/entries/{entry_id}")
-def upsert_entry(entry_id: str, body: Entry, user: sqlite3.Row = Depends(current_user)) -> dict[str, Any]:
+def upsert_entry(entry_id: str, body: Entry, user: Row = Depends(current_user)) -> dict[str, Any]:
     if entry_id != body.id:
         raise HTTPException(400, "id가 일치하지 않습니다")
     with db() as con:
@@ -353,7 +314,7 @@ def upsert_entry(entry_id: str, body: Entry, user: sqlite3.Row = Depends(current
 
 
 @app.delete("/api/entries/{entry_id}")
-def delete_entry(entry_id: str, user: sqlite3.Row = Depends(current_user)) -> dict[str, bool]:
+def delete_entry(entry_id: str, user: Row = Depends(current_user)) -> dict[str, bool]:
     with db() as con:
         row = con.execute(
             "SELECT * FROM entries WHERE id=? AND user_id=?", (entry_id, user["id"])
@@ -367,7 +328,7 @@ def delete_entry(entry_id: str, user: sqlite3.Row = Depends(current_user)) -> di
 
 
 @app.delete("/api/entries")
-def delete_all(user: sqlite3.Row = Depends(current_user)) -> dict[str, bool]:
+def delete_all(user: Row = Depends(current_user)) -> dict[str, bool]:
     with db() as con:
         con.execute("DELETE FROM entries WHERE user_id=?", (user["id"],))
         con.execute("DELETE FROM images WHERE user_id=?", (user["id"],))
@@ -375,7 +336,7 @@ def delete_all(user: sqlite3.Row = Depends(current_user)) -> dict[str, bool]:
 
 
 @app.delete("/api/me")
-def delete_account(response: Response, user: sqlite3.Row = Depends(current_user)) -> dict[str, bool]:
+def delete_account(response: Response, user: Row = Depends(current_user)) -> dict[str, bool]:
     """회원탈퇴 — 계정과 모든 일지·이미지를 즉시 삭제한다 (복구 불가)."""
     with db() as con:
         con.execute("DELETE FROM images WHERE user_id=?", (user["id"],))
@@ -390,7 +351,7 @@ def delete_account(response: Response, user: sqlite3.Row = Depends(current_user)
 async def upload_image(
     file: UploadFile = File(...),
     thumb: UploadFile | None = File(None),
-    user: sqlite3.Row = Depends(current_user),
+    user: Row = Depends(current_user),
 ) -> dict[str, str]:
     data = await file.read()
     if not data:
@@ -410,7 +371,7 @@ async def upload_image(
     return {"id": img_id}
 
 
-def _image_response(row: sqlite3.Row, key: str) -> Response:
+def _image_response(row: Row, key: str) -> Response:
     blob = row[key] if row[key] is not None else row["data"]
     mime = "image/jpeg" if key == "thumb" and row["thumb"] is not None else row["mime"]
     return Response(
@@ -420,7 +381,7 @@ def _image_response(row: sqlite3.Row, key: str) -> Response:
 
 
 @app.get("/api/images/{image_id}")
-def get_image(image_id: str, user: sqlite3.Row = Depends(current_user)) -> Response:
+def get_image(image_id: str, user: Row = Depends(current_user)) -> Response:
     with db() as con:
         row = con.execute(
             "SELECT * FROM images WHERE id=? AND user_id=?", (image_id, user["id"])
@@ -431,7 +392,7 @@ def get_image(image_id: str, user: sqlite3.Row = Depends(current_user)) -> Respo
 
 
 @app.get("/api/images/{image_id}/thumb")
-def get_thumb(image_id: str, user: sqlite3.Row = Depends(current_user)) -> Response:
+def get_thumb(image_id: str, user: Row = Depends(current_user)) -> Response:
     with db() as con:
         row = con.execute(
             "SELECT * FROM images WHERE id=? AND user_id=?", (image_id, user["id"])
@@ -443,7 +404,7 @@ def get_thumb(image_id: str, user: sqlite3.Row = Depends(current_user)) -> Respo
 
 # --------------------------------------------------------------------------- 백업 API
 @app.get("/api/export")
-def export_all(user: sqlite3.Row = Depends(current_user)) -> JSONResponse:
+def export_all(user: Row = Depends(current_user)) -> JSONResponse:
     with db() as con:
         entries = [row_to_entry(r) for r in con.execute(
             "SELECT * FROM entries WHERE user_id=? ORDER BY date, time", (user["id"],)).fetchall()]
@@ -467,7 +428,7 @@ class ImportPayload(BaseModel):
 
 
 @app.post("/api/import")
-def import_all(payload: ImportPayload, user: sqlite3.Row = Depends(current_user)) -> dict[str, int]:
+def import_all(payload: ImportPayload, user: Row = Depends(current_user)) -> dict[str, int]:
     imported_images = 0
     with db() as con:
         for im in payload.images:
@@ -506,8 +467,7 @@ def import_all(payload: ImportPayload, user: sqlite3.Row = Depends(current_user)
                      entry=excluded.entry, exit=excluded.exit, qty=excluded.qty, fee=excluded.fee,
                      pnl=excluded.pnl, pnl_pct=excluded.pnl_pct, tags=excluded.tags, comment=excluded.comment,
                      lesson=excluded.lesson, is_lesson=excluded.is_lesson, is_market=excluded.is_market,
-                     align_from=excluded.align_from, align_to=excluded.align_to, is_market=excluded.is_market,
-                 align_from=excluded.align_from, align_to=excluded.align_to,
+                     align_from=excluded.align_from, align_to=excluded.align_to,
                      rating=excluded.rating, images=excluded.images, updated_at=excluded.updated_at""",
                 (
                     e.id, user["id"], e.date, e.time, e.symbol, e.side, e.entry, e.exit, e.qty, e.fee,

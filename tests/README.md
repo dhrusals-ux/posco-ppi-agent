@@ -31,9 +31,19 @@ Chromium 경로는 `TJ_CHROME` 로 지정할 수 있습니다 (기본: `/opt/pw-
 | `embed-themes` | 아티팩트 임베드 환경에서 시스템 라이트/다크 대응 |
 | `embed-downloads` | 임베드 환경의 파일 저장 경로(호스트 API) 폴백 |
 | `standalone-tree` | 독립 저장소 트리에서 화면만 서빙되고 소스가 노출되지 않음 |
+| `db-persistence` | 서버 재시작 후 일지·이미지 보존, 계정 간 격리 (API 직접 호출) |
 
 `standalone-tree` 는 `python tools/make-standalone.py` 로 생성한 트리에 별도 서버를 띄워야 하므로
 기본 실행에서 제외됩니다.
+
+## PostgreSQL 로 같이 돌리기
+
+`TJ_TEST_DATABASE_URL` 을 주면 자체 서버 테스트가 SQLite 대신 **실제 PostgreSQL** 로 돌아갑니다.
+운영 배포 전에 한 번 돌려보면 DB 계층까지 같이 검증됩니다.
+
+```bash
+TJ_TEST_DATABASE_URL="postgresql://tj@127.0.0.1:5432/tjdb" bash tests/run.sh
+```
 
 ## 참고
 

@@ -1,3 +1,6 @@
 fastapi>=0.110
 uvicorn[standard]>=0.27
 python-multipart>=0.0.9
+# PostgreSQL(운영)로 돌릴 때만 필요 — DATABASE_URL 이 없으면 SQLite 로 동작합니다.
+psycopg[binary]>=3.1
+psycopg-pool>=3.2

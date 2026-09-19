@@ -1,0 +1,43 @@
+# 매매일지 자체 호스팅 — 서버 + PostgreSQL 한 번에 띄우기
+#
+#   1) 세션 키를 만든다:  echo "TJ_SECRET=$(openssl rand -hex 32)" >> .env
+#   2) 띄운다:            docker compose up -d
+#   3) 접속:              http://localhost:8000
+#
+# 데이터는 pgdata 볼륨에 남으므로 컨테이너를 지워도 일지는 보존됩니다.
+# 백업:  docker compose exec db pg_dump -U tj tjdb > backup.sql
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tj
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tj-local-password}
+      POSTGRES_DB: tjdb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tj -d tjdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://tj:${POSTGRES_PASSWORD:-tj-local-password}@db:5432/tjdb
+      TJ_SECRET: ${TJ_SECRET:?TJ_SECRET 를 .env 에 설정하세요 (openssl rand -hex 32)}
+      TJ_ALLOW_REGISTER: ${TJ_ALLOW_REGISTER:-auto}
+      TJ_SESSION_DAYS: ${TJ_SESSION_DAYS:-30}
+      TJ_MAX_IMAGE_MB: ${TJ_MAX_IMAGE_MB:-8}
+    ports:
+      - "${TJ_PORT:-8000}:8000"
+
+volumes:
+  pgdata:

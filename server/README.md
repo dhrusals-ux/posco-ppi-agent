@@ -1,11 +1,12 @@
-# 🗄 매매일지 서버 (FastAPI + SQLite)
+# 🗄 매매일지 서버 (FastAPI + SQLite/PostgreSQL)
 
 브라우저에만 저장되던 매매일지를 **계정 기반 서버 저장**으로 바꿔주는 백엔드입니다.
 서버를 켜고 그 주소로 접속하면 프런트엔드가 자동으로 **서버 모드**로 전환되어,
 PC·노트북·휴대폰 어디서 접속해도 같은 일지가 보입니다.
 
-- 프레임워크: FastAPI + Uvicorn / 저장소: SQLite 파일 1개 (`data/journal.db`)
-- 이미지도 DB에 함께 저장 → **백업은 이 파일 하나만 복사하면 끝**
+- 프레임워크: FastAPI + Uvicorn
+- 저장소: **SQLite 파일 1개**(기본) 또는 **PostgreSQL**(`DATABASE_URL` 을 주면 자동 전환)
+- 이미지도 DB에 함께 저장 → SQLite면 파일 하나, PostgreSQL이면 `pg_dump` 하나로 백업 끝
 - 로그인: 아이디 + 비밀번호 (PBKDF2-SHA256 20만 회 해시), HttpOnly 세션 쿠키
 - 프런트엔드(`trading-journal/`)도 이 서버가 함께 서빙합니다
 
@@ -34,6 +35,22 @@ docker run -d --name maemae -p 8000:8000 \
   maemae-journal
 ```
 
+### PostgreSQL 로 (운영 권장)
+```bash
+export DATABASE_URL="postgresql://user:password@host:5432/dbname?sslmode=require"
+export TJ_SECRET="$(python -c 'import secrets;print(secrets.token_hex(32))')"
+uvicorn server.main:app --host 0.0.0.0 --port 8000
+```
+테이블은 서버가 처음 뜰 때 알아서 만듭니다(`users` / `entries` / `images`).
+현재 어떤 DB로 돌고 있는지는 `GET /api/health` 의 `"db"` 값으로 확인합니다 — `sqlite` 또는 `postgres`.
+
+### 서버 + DB 한 번에 (docker compose)
+```bash
+echo "TJ_SECRET=$(openssl rand -hex 32)" >> .env
+docker compose up -d        # 서버 + PostgreSQL 16 + 데이터 볼륨
+# → http://localhost:8000
+```
+
 ### 클라우드 (Render / Railway / Fly.io 등)
 - **Build**: `pip install -r server/requirements.txt`
 - **Start**: `uvicorn server.main:app --host 0.0.0.0 --port $PORT`
@@ -51,7 +68,9 @@ docker run -d --name maemae -p 8000:8000 \
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `TJ_SECRET` | (임시 생성) | 세션 쿠키 서명 키. **운영 시 필수** — 없으면 재시작마다 로그인 해제 |
-| `TJ_DB` | `server/data/journal.db` | SQLite 파일 경로 |
+| `DATABASE_URL` | (없음) | 있으면 PostgreSQL 사용. `postgresql://user:pw@host:5432/db` |
+| `TJ_DB` | `server/data/journal.db` | SQLite 파일 경로 (`DATABASE_URL` 이 없을 때만) |
+| `TJ_PG_MIN` / `TJ_PG_MAX` | `1` / `10` | PostgreSQL 커넥션 풀 크기 |
 | `TJ_ALLOW_REGISTER` | `auto` | `auto`=첫 계정만 가입 허용 / `1`=항상 허용 / `0`=차단 |
 | `TJ_SESSION_DAYS` | `30` | 로그인 유지 기간(일) |
 | `TJ_MAX_IMAGE_MB` | `8` | 이미지 1장 최대 용량(MB) |
@@ -67,7 +86,7 @@ docker run -d --name maemae -p 8000:8000 \
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| `GET` | `/api/health` | 서버 여부·가입 개방 상태 (프런트의 모드 자동 감지에 사용) |
+| `GET` | `/api/health` | 서버 여부·DB 종류(`db`)·가입 개방 상태 (프런트의 모드 자동 감지에 사용) |
 | `POST` | `/api/auth/register` | 회원가입 `{username, password}` |
 | `POST` | `/api/auth/login` | 로그인 |
 | `POST` | `/api/auth/logout` | 로그아웃 |
@@ -88,11 +107,15 @@ docker run -d --name maemae -p 8000:8000 \
 
 ## 💾 백업
 
-- 파일 통째로: 서버를 잠시 멈추고 `server/data/journal.db*` 복사 (WAL 파일 포함)
+- SQLite: 서버를 잠시 멈추고 `server/data/journal.db*` 복사 (WAL 파일 포함)
+- PostgreSQL: `pg_dump "$DATABASE_URL" > backup.sql` (docker compose 라면 `docker compose exec db pg_dump -U tj tjdb > backup.sql`)
 - 앱에서: `⋯ → 백업 내보내기(JSON)` — 서버 모드에서는 서버가 만든 백업을 내려받습니다
 - 복원: `⋯ → 백업 불러오기` (또는 `POST /api/import`)
 
 브라우저 저장 모드에서 쓰던 기록도 같은 JSON 백업으로 그대로 서버에 옮길 수 있습니다.
+SQLite ↔ PostgreSQL 이사도 같은 방법입니다 — 옛 서버에서 `GET /api/export`, 새 서버에서 `POST /api/import`.
+
+배포 방법별 자세한 안내는 [`docs/DEPLOY-SERVER.md`](../docs/DEPLOY-SERVER.md) 에 있습니다.
 
 ---
 

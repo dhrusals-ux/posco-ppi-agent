@@ -21,7 +21,12 @@ COPY = [
     ("trading-journal/index.html", "index.html"),
     ("trading-journal/config.js", "config.js"),
     ("trading-journal/README.md", "README.md"),
+    ("trading-journal/manifest.json", "manifest.json"),
+    ("trading-journal/sw.js", "sw.js"),
+    ("trading-journal/icons/icon-192.png", "icons/icon-192.png"),
+    ("trading-journal/icons/icon-512.png", "icons/icon-512.png"),
     ("server/main.py", "server/main.py"),
+    ("server/dbx.py", "server/dbx.py"),
     ("server/requirements.txt", "server/requirements.txt"),
     ("server/Dockerfile", "server/Dockerfile"),
     ("server/.env.example", "server/.env.example"),
@@ -29,6 +34,10 @@ COPY = [
     ("supabase/schema.sql", "supabase/schema.sql"),
     ("supabase/README.md", "supabase/README.md"),
     ("docs/DEPLOY-VERCEL.md", "docs/DEPLOY-VERCEL.md"),
+    ("docs/DEPLOY-SERVER.md", "docs/DEPLOY-SERVER.md"),
+    ("docker-compose.yml", "docker-compose.yml"),
+    ("render.yaml", "render.yaml"),
+    ("fly.toml", "fly.toml"),
     ("docs/legal/README.md", "docs/legal/README.md"),
     ("docs/legal/이용약관.md", "docs/legal/이용약관.md"),
     ("docs/legal/개인정보처리방침.md", "docs/legal/개인정보처리방침.md"),
@@ -62,6 +71,7 @@ REWRITES = {
         ("[`supabase/README.md`](../supabase/README.md)", "[`supabase/README.md`](supabase/README.md)"),
         ("[`server/README.md`](../server/README.md)", "[`server/README.md`](server/README.md)"),
         ("[`docs/DEPLOY-VERCEL.md`](../docs/DEPLOY-VERCEL.md)", "[`docs/DEPLOY-VERCEL.md`](docs/DEPLOY-VERCEL.md)"),
+        ("[`docs/DEPLOY-SERVER.md`](../docs/DEPLOY-SERVER.md)", "[`docs/DEPLOY-SERVER.md`](docs/DEPLOY-SERVER.md)"),
     ],
 }
 
@@ -91,7 +101,29 @@ def config_js() -> Response:
     if not path.exists():
         return Response(content="window.TJ_CONFIG = {};", media_type="application/javascript")
     return FileResponse(path, media_type="application/javascript",
-                        headers={"Cache-Control": "no-cache"})'''
+                        headers={"Cache-Control": "no-cache"})
+
+
+# PWA(홈 화면 설치·오프라인) 파일
+_PUBLIC = {
+    "/manifest.json": ("manifest.json", "application/manifest+json"),
+    "/sw.js": ("sw.js", "application/javascript"),
+    "/icons/icon-192.png": ("icons/icon-192.png", "image/png"),
+    "/icons/icon-512.png": ("icons/icon-512.png", "image/png"),
+}
+
+
+@app.get("/manifest.json")
+@app.get("/sw.js")
+@app.get("/icons/{name}")
+def public_asset(request: Request) -> Response:
+    entry = _PUBLIC.get(request.url.path)
+    if entry is None:
+        raise HTTPException(404, "not found")
+    path = WEB_DIR / entry[0]
+    if not path.exists():
+        raise HTTPException(404, "not found")
+    return FileResponse(path, media_type=entry[1], headers={"Cache-Control": "no-cache"})'''
 
 VERCEL_JSON = """{
   "$schema": "https://openapi.vercel.sh/vercel.json",
@@ -109,7 +141,10 @@ VERCEL_JSON = """{
 }
 """
 
-GITIGNORE = """# 서버 데이터 (SQLite)
+GITIGNORE = """# 비밀값
+.env
+
+# 서버 데이터 (SQLite)
 server/data/
 *.db
 *.db-wal

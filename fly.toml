@@ -1,0 +1,36 @@
+# Fly.io 배포 설정 — 무료 한도 안에서 도쿄(nrt) 리전에 띄운다.
+#
+#   fly launch --no-deploy --copy-config      # 앱 이름만 정하고 생성
+#   fly secrets set TJ_SECRET="$(openssl rand -hex 32)"
+#   fly postgres create --name ch-trading-db --region nrt
+#   fly postgres attach ch-trading-db         # DATABASE_URL 을 자동으로 넣어준다
+#   fly deploy
+app = "ch-trading"
+primary_region = "nrt"
+
+[build]
+  dockerfile = "server/Dockerfile"
+
+[env]
+  TJ_ALLOW_REGISTER = "auto"
+  TJ_SESSION_DAYS = "30"
+  TJ_MAX_IMAGE_MB = "8"
+  PORT = "8000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"     # 쓰지 않을 때 멈춰 무료 한도를 아낀다
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
