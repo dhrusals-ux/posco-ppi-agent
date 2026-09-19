@@ -19,6 +19,12 @@ trap cleanup EXIT
 need() { command -v "$1" >/dev/null || { echo "✗ $1 이 필요합니다"; exit 1; }; }
 need python3; need node
 
+if ! python3 -c "import fastapi, uvicorn, multipart" 2>/dev/null; then
+  echo "▶ 서버 의존성 설치 (fastapi/uvicorn)"
+  pip install -q -r server/requirements.txt || {
+    echo "✗ 서버 의존성 설치 실패 — pip install -r server/requirements.txt 를 먼저 실행하세요"; exit 1; }
+fi
+
 echo "▶ 테스트 자료 준비"
 python3 tests/fixtures/make-charts.py "$TMP" || exit 1
 python3 tests/lib/make-wrapped.py "$TMP"     || exit 1

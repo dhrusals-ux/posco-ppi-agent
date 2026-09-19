@@ -74,7 +74,12 @@ button{cursor:pointer;background:none;border:none}
 }
 .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:16px;letter-spacing:-.2px}
 .brand small{color:var(--faint);font-weight:500;font-size:11px;letter-spacing:.4px}
-.tabs{display:flex;gap:4px;background:var(--bg-soft);padding:4px;border-radius:11px;border:1px solid var(--line-soft)}
+.tabs{
+  display:flex;gap:4px;background:var(--bg-soft);padding:4px;border-radius:11px;
+  border:1px solid var(--line-soft);overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch
+}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{white-space:nowrap;flex:0 0 auto}
 .tabs button{
   padding:6px 14px;border-radius:8px;color:var(--muted);font-weight:600;font-size:13px;
   transition:background .15s,color .15s;
@@ -172,6 +177,16 @@ body.img-sm .shots img{
   color:var(--accent);margin-bottom:4px
 }
 /* ---------- 약점 심층 분석 ---------- */
+.notice{
+  max-width:1180px;margin:14px auto -4px;padding:12px 16px;display:flex;align-items:center;gap:12px;
+  background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 35%,transparent);
+  border-radius:var(--radius);font-size:13.5px;line-height:1.6
+}
+.notice .msg{flex:1;min-width:0}
+.notice .msg b{font-weight:700}
+.notice .btn{flex:0 0 auto;padding:7px 13px;font-size:12.5px}
+@media(max-width:720px){ .notice{margin:12px 12px -4px;flex-wrap:wrap} .notice .msg{flex:1 0 100%} }
+
 .periods{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
 .periods button{
   padding:6px 13px;border-radius:999px;border:1px solid var(--line);background:var(--panel);
@@ -388,6 +403,13 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
 }
 .thumb button:hover{background:var(--loss)}
 .autonote{font-size:11.5px;color:var(--accent);margin-top:4px;min-height:14px}
+.tag-picks{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+.tag-picks button{
+  padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel-2);
+  font-size:11.5px;font-weight:600;color:var(--muted)
+}
+.tag-picks button:hover{border-color:var(--accent);color:var(--accent)}
+.tag-picks button.on{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
 
 /* ---------- auth ---------- */
 #auth{position:fixed;inset:0;z-index:80;background:var(--bg);display:none;place-items:center;padding:20px}
@@ -467,11 +489,25 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
 }
 @media(max-width:720px){
   .fab{display:grid;place-items:center}
-  .search input{width:140px}
   .brand small{display:none}
+  .brand{font-size:15px;order:1}
   main{padding:14px 12px 90px}
   .week-grid{grid-template-columns:repeat(4,1fr)}
   .cell{min-height:66px}
+
+  /* 상단바를 두 줄로: [로고 · 검색 · 새 기록 · 메뉴] / [탭] */
+  .topbar{padding:8px 12px;gap:8px;row-gap:8px}
+  .topbar .spacer{display:none}
+  .search{order:2;flex:1;min-width:0}
+  .search input{width:100%}
+  #btn-new{order:3;padding:8px 11px}
+  #btn-menu{order:4}
+  .tabs{order:5;flex:1 0 100%;padding:3px}
+  .tabs button{padding:6px 11px;font-size:12.5px}
+}
+@media(max-width:420px){
+  #btn-new{font-size:0;padding:8px 10px}
+  #btn-new::before{content:"+";font-size:16px;font-weight:700}
 }
 </style>
 </head>
@@ -538,6 +574,12 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
   <button id="m-close-account" style="color:var(--loss);display:none">🚪 회원탈퇴 (계정·데이터 삭제)</button>
 </div>
 
+<div id="backup-note" class="notice" style="display:none">
+  <span class="msg"></span>
+  <button type="button" id="notice-act" class="btn primary">지금 백업</button>
+  <button type="button" id="notice-close" class="btn ghost" aria-label="알림 닫기">✕</button>
+</div>
+
 <main>
   <div class="periodbar">
     <button class="nav-btn" id="prev" aria-label="이전 기간">‹</button>
@@ -573,7 +615,9 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
         </div>
         <div class="field">
           <label for="f-symbol">종목 *</label>
-          <input type="text" id="f-symbol" placeholder="예: 삼성전자 / BTCUSDT" required>
+          <input type="text" id="f-symbol" list="symbol-list" autocomplete="off"
+                 placeholder="예: 삼성전자 / BTCUSDT" required>
+          <datalist id="symbol-list"></datalist>
         </div>
       </div>
 
@@ -647,7 +691,8 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
 
       <div class="field">
         <label for="f-tags">태그 <span style="font-weight:400">(쉼표로 구분)</span></label>
-        <input type="text" id="f-tags" placeholder="예: 돌파매매, 눌림목, 뇌동매매, 손절지킴">
+        <input type="text" id="f-tags" autocomplete="off" placeholder="예: 돌파매매, 눌림목, 뇌동매매, 손절지킴">
+        <div class="tag-picks" id="tag-picks"></div>
       </div>
 
       <div class="field">
@@ -1280,6 +1325,9 @@ function dayPnl(list){
 function render(){
   _visCache = null;
   renderView();
+  const on = $("#tabs button.on");
+  if(on && on.scrollIntoView) on.scrollIntoView({block:"nearest", inline:"nearest"});
+  checkBackup();
   hydrateImages();
 }
 function renderView(){
@@ -1491,10 +1539,17 @@ function renderMonth(){
 }
 
 /* ---------------- view: 통계 (전체 기간) ---------------- */
+function periodChips(){
+  return '<div class="periods">'+PERIODS.map(p=>
+    '<button data-period="'+p.k+'"'+(state.period===p.k?' class="on"':'')+'>'+p.label+'</button>').join("")+'</div>';
+}
 function renderStats(){
-  const list = visible().slice().sort(cmpEntry);
+  const days = (PERIODS.find(p=>p.k===state.period) || PERIODS[0]).days;
+  const from = days ? ymd(addDays(new Date(), -days)) : "";
+  const list = visible().filter(e=>!from || e.date >= from).slice().sort(cmpEntry);
   const a = agg(list);
-  period("전체 통계", list.length?(list[0].date+" ~ "+list[list.length-1].date):"기록 없음");
+  const label = (PERIODS.find(p=>p.k===state.period)||PERIODS[0]).label;
+  period(label+" 통계", list.length?(list[0].date+" ~ "+list[list.length-1].date):"기록 없음");
   statCards([
     {k:"누적 손익", v:signed(a.pnl), c:cls(a.pnl)},
     {k:"총 거래", v:a.n+"건", x:Array.from(byDay(list).keys()).length+"일"},
@@ -1502,7 +1557,11 @@ function renderStats(){
     {k:"손익비 (PF)", v:a.pf==null?"—":(a.pf===Infinity?"∞":a.pf.toFixed(2))},
     {k:"평균 수익 / 손실", v:signed(a.avgWin)+" / "+signed(a.avgLoss)}
   ]);
-  if(!list.length){ $("#view").innerHTML = emptyBox("아직 기록이 없습니다","일지를 쌓으면 누적 손익 곡선과 태그별 성과가 여기에 표시됩니다."); return; }
+  if(!list.length){
+    $("#view").innerHTML = periodChips() + emptyBox("이 기간에는 기록이 없습니다",
+      "기간을 넓히거나 일지를 더 쌓으면 누적 손익 곡선과 태그별 성과가 표시됩니다.");
+    return;
+  }
 
   // 누적 손익 곡선
   const dm = byDay(list), keys = Array.from(dm.keys()).sort();
@@ -1558,7 +1617,7 @@ function renderStats(){
     o.v+=(e.pnl||0); o.n++; if(e.pnl>0) o.w++; sy.set(e.symbol,o); });
   const syms = Array.from(sy.values()).sort((x,y)=>y.v-x.v).slice(0,12);
 
-  $("#view").innerHTML =
+  $("#view").innerHTML = periodChips() +
     '<div class="panel"><h3>💹 누적 손익 곡선</h3>'+chart+'</div>'+
     '<div class="grid-2">'+
       '<div class="panel"><h3>🗓 월별 성과</h3>'+bars(monthly)+'</div>'+
@@ -2103,8 +2162,7 @@ function renderWeakness(){
     {k:"최대 낙폭", v:base.mdd?signed(base.mdd):"—", c:base.mdd?"neg":""},
   ]);
 
-  const chips = '<div class="periods">'+PERIODS.map(p=>
-    '<button data-period="'+p.k+'"'+(state.period===p.k?' class="on"':'')+'>'+p.label+'</button>').join("")+'</div>';
+  const chips = periodChips();
 
   if(base.scored < 5){
     $("#view").innerHTML = chips + emptyBox("분석할 기록이 아직 적습니다",
@@ -2279,6 +2337,33 @@ function renderThumbs(){
   hydrateImages();
 }
 
+/* 자주 쓴 종목·태그 — 입력 부담을 줄인다 */
+function frequent(pick, limit){
+  const count = new Map();
+  state.entries.forEach(e=>{
+    for(const v of [].concat(pick(e))){
+      if(!v) continue;
+      count.set(v, (count.get(v)||0) + 1);
+    }
+  });
+  return Array.from(count.entries()).sort((a,b)=>b[1]-a[1]).slice(0, limit).map(x=>x[0]);
+}
+function currentTags(){
+  return $("#f-tags").value.split(",").map(t=>t.trim()).filter(Boolean);
+}
+function renderTagPicks(){
+  const picked = currentTags();
+  const tags = frequent(e=>e.tags||[], 10);
+  $("#tag-picks").innerHTML = tags.length
+    ? tags.map(t=>'<button type="button" data-tag="'+esc(t)+'"'+(picked.includes(t)?' class="on"':'')+'>#'+esc(t)+'</button>').join("")
+    : "";
+}
+function fillSuggestions(){
+  $("#symbol-list").innerHTML = frequent(e=>e.symbol, 30)
+    .map(v=>'<option value="'+esc(v)+'"></option>').join("");
+  renderTagPicks();
+}
+
 /* ---------------- modal / form ---------------- */
 const modal = $("#modal");
 let autoPnl = true, autoPct = true, sideVal = "long", ratingVal = 0;
@@ -2345,7 +2430,7 @@ function openModal(entry, presetDate, mode){
   setSide(entry ? (entry.side||"long") : "long");
   setRating(entry ? (entry.rating||0) : 0);
   if(entry) state.pending = Store.pendingFor(entry);
-  renderThumbs(); calcAuto();
+  renderThumbs(); calcAuto(); fillSuggestions();
   modal.showModal();
   setTimeout(()=>$("#f-symbol").focus(),50);
 }
@@ -2594,6 +2679,7 @@ async function exportJSON(){
   try{
     const blob = await Store.exportBlob();
     await download("trading-journal-backup-"+ymd(new Date())+".json", blob);
+    markBackedUp();
   }catch(err){ console.error(err); toast("백업하지 못했습니다: "+err.message); }
 }
 async function importJSON(file){
@@ -2749,6 +2835,15 @@ $("#f-to").addEventListener("click", e=>{
 $("#f-side").addEventListener("click", e=>{
   const b = e.target.closest("button[data-v]"); if(!b) return; setSide(b.dataset.v); calcAuto();
 });
+$("#tag-picks").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-tag]"); if(!b) return;
+  const tag = b.dataset.tag;
+  const tags = currentTags();
+  const next = tags.includes(tag) ? tags.filter(t=>t!==tag) : tags.concat([tag]);
+  $("#f-tags").value = next.join(", ");
+  renderTagPicks();
+});
+$("#f-tags").addEventListener("input", renderTagPicks);
 $("#f-rating").addEventListener("click", e=>{
   const b = e.target.closest("button[data-v]"); if(!b) return; setRating(+b.dataset.v);
 });
@@ -2895,6 +2990,42 @@ document.addEventListener("keydown", e=>{
     localStorage.setItem("tj-view", state.view); render();
   }
 });
+
+/* ---------------- 백업 알림 ---------------- */
+const BACKUP_KEY = "tj-last-backup", SNOOZE_KEY = "tj-backup-snooze";
+const DAY = 86400000;
+
+function markBackedUp(){
+  localStorage.setItem(BACKUP_KEY, new Date().toISOString());
+  localStorage.removeItem(SNOOZE_KEY);
+  checkBackup();
+}
+function checkBackup(){
+  const el = $("#backup-note");
+  const hide = ()=>{ el.style.display = "none"; };
+  if(Store.mode !== "local") return hide();          // 서버·클라우드는 저장소가 따로 있다
+  if(state.entries.length < 10) return hide();
+
+  const snooze = Date.parse(localStorage.getItem(SNOOZE_KEY) || "");
+  if(snooze && Date.now() - snooze < 7*DAY) return hide();
+
+  const last = Date.parse(localStorage.getItem(BACKUP_KEY) || "");
+  const days = last ? Math.floor((Date.now() - last)/DAY) : null;
+  if(days !== null && days < 14) return hide();
+
+  $(".msg", el).innerHTML = "💾 이 기록은 <b>이 브라우저에만</b> 저장돼 있습니다. "+
+    (days === null
+      ? "아직 백업한 적이 없습니다 — 기록 "+state.entries.length+"건이 쌓였습니다."
+      : "마지막 백업이 <b>"+days+"일 전</b>입니다.")+
+    " 브라우저 데이터를 지우면 복구할 수 없습니다.";
+  el.style.display = "flex";
+}
+$("#notice-act").onclick = ()=>exportJSON();
+$("#notice-close").onclick = ()=>{
+  localStorage.setItem(SNOOZE_KEY, new Date().toISOString());
+  checkBackup();
+  toast("7일 뒤에 다시 알려드릴게요");
+};
 
 /* ---------------- 계정 / 로그인 ---------------- */
 function showAuth(){ $("#auth").classList.add("on"); setTimeout(()=>$("#a-user").focus(),60); }
