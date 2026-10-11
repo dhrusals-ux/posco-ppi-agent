@@ -17,6 +17,7 @@ await p.fill('#a-user','trader'); await p.fill('#a-pass','journal1234');
 await p.click('#a-register'); await p.waitForTimeout(1200);
 console.log('after register — auth hidden:', !(await p.locator('#auth.on').count()));
 console.log('account label:', (await p.textContent('#acct')).replace(/\s+/g,' ').trim().slice(0,40));
+await p.click('#tabs button[data-view="day"]'); await p.waitForTimeout(300);  // 기본 화면이 차트북이므로 일별로 이동
 
 await p.click('#btn-new');
 await p.fill('#f-symbol','삼성전자');
@@ -46,6 +47,7 @@ await p2.goto(BASE); await p2.waitForTimeout(700);
 console.log('B sees login screen:', !!(await p2.locator('#auth.on').count()));
 await p2.fill('#a-user','trader'); await p2.fill('#a-pass','journal1234');
 await p2.click('button[type=submit]'); await p2.waitForTimeout(1500);
+await p2.click('#tabs button[data-view="day"]'); await p2.waitForTimeout(400);  // 기본 화면이 차트북이므로 일별로 이동
 console.log('B entries (다른 기기 동기화):', await p2.locator('.entry').count(),
             '| shots:', await p2.locator('.shots img').count(),
             '| symbol:', await p2.textContent('.entry .sym'));

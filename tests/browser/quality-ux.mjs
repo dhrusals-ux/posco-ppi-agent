@@ -8,6 +8,7 @@ p.on('pageerror',e=>errs.push(e.message));
 p.on('console',m=>{ if(m.type()==='error' && !/40[134]/.test(m.text())) errs.push('console: '+m.text()); });
 p.on('dialog',d=>d.accept());
 await p.goto(APP_URL); await p.waitForTimeout900 ?? await p.waitForTimeout(900);
+await p.click('#tabs button[data-view="day"]'); await p.waitForTimeout(300);  // 기본 화면이 차트북이므로 일별로 이동
 
 // ── 빈 상태 버튼
 console.log('빈 상태 버튼:', await p.locator('#empty-new').isVisible(), await p.locator('#empty-sample').isVisible());

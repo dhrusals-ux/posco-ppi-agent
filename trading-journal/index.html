@@ -176,6 +176,103 @@ body.img-sm .shots img{
   display:block;font-size:11px;font-weight:700;letter-spacing:.3px;
   color:var(--accent);margin-bottom:4px
 }
+/* ---------- 차트북 ---------- */
+.book-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
+.seg{display:flex;gap:2px;background:var(--panel-2);border:1px solid var(--line);border-radius:999px;padding:2px}
+.seg button{padding:5px 11px;border-radius:999px;font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap}
+.seg .seg-l{padding:5px 4px 5px 9px;font-size:11px;font-weight:700;color:var(--faint);align-self:center;white-space:nowrap}
+.seg button:hover{color:var(--accent)}
+.seg button.on{background:var(--panel);color:var(--text)}
+.book-note{color:var(--faint);font-size:12px;font-variant-numeric:tabular-nums;margin-left:auto}
+.book-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.book-grid.sz-lg{grid-template-columns:repeat(auto-fill,minmax(430px,1fr))}
+.book-grid.sz-sm{grid-template-columns:repeat(auto-fill,minmax(186px,1fr))}
+.bcard{
+  position:relative;margin:0;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--radius);overflow:hidden;transition:border-color .12s,box-shadow .12s
+}
+.bcard:hover{border-color:var(--accent)}
+.bcard img{
+  /* 차트 캡처는 대개 16:9 — 같은 비율로 맞춰 잘려 나가는 부분을 최소화한다 */
+  display:block;width:100%;aspect-ratio:16/9;object-fit:cover;object-position:center;
+  background:var(--panel-2);cursor:zoom-in
+}
+.bcard figcaption{padding:9px 11px 11px;display:grid;gap:5px}
+.bc-top{display:flex;align-items:baseline;gap:8px}
+.bc-top .sym{font-weight:700;font-size:13.5px;letter-spacing:-.2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bc-top .pnl{margin-left:auto;font-weight:700;font-size:12.5px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.bc-meta{color:var(--muted);font-size:11.5px;display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.bc-tags{display:flex;gap:4px;flex-wrap:wrap}
+.bc-tags .tag{padding:1px 7px;font-size:10.5px}
+.bc-edit{
+  /* 터치 기기에는 hover 가 없으므로 항상 옅게 보여 두고, 포인터를 올리면 또렷해진다 */
+  position:absolute;top:7px;right:7px;width:28px;height:28px;border-radius:8px;
+  background:rgba(0,0,0,.5);color:#fff;font-size:13px;opacity:.5;transition:opacity .12s
+}
+.bcard:hover .bc-edit,.bc-edit:focus{opacity:1}
+.bc-edit:hover{background:var(--accent)}
+.book-grid.sz-sm figcaption{padding:7px 9px 9px}
+.book-grid.sz-sm .bc-tags,.book-grid.sz-sm .bc-top .pnl{display:none}
+/* 비교 선택 */
+body.cmp .bcard img{cursor:pointer}
+.bcard.picked{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.bc-no{
+  position:absolute;top:7px;left:7px;min-width:24px;height:24px;padding:0 6px;border-radius:999px;
+  background:var(--accent);color:#fff;font-size:12px;font-weight:700;
+  display:none;align-items:center;justify-content:center
+}
+.bcard.picked .bc-no{display:flex}
+.cmp-bar{
+  position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:60;
+  display:flex;gap:8px;align-items:center;padding:8px 10px 8px 16px;border-radius:999px;
+  background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow)
+}
+.cmp-bar b{font-size:12.5px;white-space:nowrap}
+/* 비교 보기 */
+#compare{position:fixed;inset:0;z-index:92;background:var(--bg);display:none;grid-template-rows:auto 1fr}
+#compare.on{display:grid}
+.cmp-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.cmp-head b{font-size:13.5px}
+.cmp-head .spacer{flex:1}
+.cmp-grid{display:grid;gap:10px;padding:12px;overflow:auto;min-height:0}
+.cmp-grid.n2{grid-template-columns:1fr 1fr}
+.cmp-grid.n3,.cmp-grid.n4{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+.cmp-item{display:flex;flex-direction:column;gap:6px;min-height:0}
+.cmp-item img{
+  flex:1;min-height:0;width:100%;object-fit:contain;background:var(--panel-2);
+  border:1px solid var(--line);border-radius:var(--radius-sm)
+}
+.cmp-cap{font-size:12px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap;align-items:baseline}
+.cmp-cap b{color:var(--text);font-size:13px}
+/* 라이트박스 캡션 */
+.lb-cap{
+  position:absolute;left:0;right:0;bottom:0;padding:14px 18px 40px;color:#fff;
+  background:linear-gradient(to top,rgba(0,0,0,.86),rgba(0,0,0,.6) 55%,transparent);
+  font-size:13px;line-height:1.6;max-height:34vh;overflow:auto
+}
+.lb-cap:empty{display:none}
+.lb-cap .t{display:flex;gap:10px;flex-wrap:wrap;align-items:baseline;margin-bottom:4px}
+.lb-cap .t b{font-size:15px}
+.lb-cap .t span{opacity:.82;font-size:12px}
+.lb-cap .t .tag{background:rgba(255,255,255,.16);color:#fff}
+.lb-cap .c{opacity:.94;white-space:pre-wrap;word-break:break-word}
+.lb-cap .l{margin-top:6px;padding-left:10px;border-left:2px solid var(--accent);opacity:.94}
+body.lb-nocap .lb-cap{display:none}
+@media(max-width:720px){
+  .book-grid,.book-grid.sz-md{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+  .book-grid.sz-lg{grid-template-columns:1fr}
+  /* 좁은 화면에서는 필터가 화면을 다 먹지 않도록 한 줄 가로 스크롤로 */
+  .book-bar,#book-tags{
+    flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;
+    -webkit-overflow-scrolling:touch;padding-bottom:2px
+  }
+  .book-bar::-webkit-scrollbar,#book-tags::-webkit-scrollbar{display:none}
+  .book-bar>*,#book-tags>*{flex:0 0 auto}
+  .book-note{display:none}
+  .cmp-grid.n2,.cmp-grid.n3,.cmp-grid.n4{grid-template-columns:1fr;grid-template-rows:none}
+  .lb-cap{max-height:40vh;padding-bottom:16px}
+}
+
 /* ---------- 약점 심층 분석 ---------- */
 .notice{
   max-width:1180px;margin:14px auto -4px;padding:12px 16px;display:flex;align-items:center;gap:12px;
@@ -539,7 +636,8 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
 <header class="topbar">
   <div class="brand">📓 매매일지 <small>TRADING JOURNAL</small></div>
   <nav class="tabs" id="tabs" aria-label="화면 전환">
-    <button data-view="day" class="on">일별</button>
+    <button data-view="book" class="on">📔 차트북</button>
+    <button data-view="day">일별</button>
     <button data-view="week">주별</button>
     <button data-view="month">월간</button>
     <button data-view="market">장중</button>
@@ -784,11 +882,22 @@ html[data-theme="light"] .field input,html[data-theme="light"] .field select,htm
     <button type="button" id="lb-out" aria-label="축소">−</button>
     <button type="button" id="lb-in" aria-label="확대">+</button>
     <button type="button" id="lb-fit">맞춤</button>
+    <button type="button" id="lb-cap-t" aria-label="메모 보이기/숨기기">메모</button>
     <button type="button" id="lb-close" aria-label="닫기">✕ 닫기</button>
   </div>
+  <div class="lb-cap" id="lb-cap"></div>
   <button class="lb-nav prev" id="lb-prev" aria-label="이전 이미지">‹</button>
   <button class="lb-nav next" id="lb-next" aria-label="다음 이미지">›</button>
   <div class="lb-hint">휠 또는 +/− 로 확대 · 끌어서 이동 · 더블클릭 확대/맞춤 · ← → 이미지 이동 · Esc 닫기</div>
+</div>
+<div id="compare" role="dialog" aria-modal="true" aria-label="차트 비교 보기">
+  <div class="cmp-head">
+    <b>차트 비교</b>
+    <span class="book-note" id="cmp-note" style="margin-left:0"></span>
+    <span class="spacer"></span>
+    <button type="button" class="btn" id="cmp-close">✕ 닫기</button>
+  </div>
+  <div class="cmp-grid" id="cmp-grid"></div>
 </div>
 <div id="toast" role="status" aria-live="polite"><span class="msg"></span></div>
 <input type="file" id="import-file" accept="application/json" hidden>
@@ -877,7 +986,7 @@ const DB = {
 
 /* ---------------- state ---------------- */
 const state = {
-  view:  localStorage.getItem("tj-view") || "day",
+  view:  localStorage.getItem("tj-view") || "book",
   cursor: new Date(),
   entries: [],
   imgCache: new Map(),   // id -> {thumb, blob}
@@ -887,7 +996,15 @@ const state = {
   modalMode: "trade",       // trade | market
   mxFilter: null,           // "역배열>정배열" 형태의 전환 필터
   bigImages: localStorage.getItem("tj-imgsize") !== "small",
-  shown: {lessons:60, market:60, month:60},   // 긴 목록은 나눠서 그린다
+  shown: {lessons:60, market:60, month:60, book:120},   // 긴 목록은 나눠서 그린다
+  book: {                                    // 차트북 화면
+    tags: [],                                // 선택한 패턴 태그 (모두 포함하는 기록만)
+    kind: "all",                             // all | trade | market | lesson
+    stars: 0,                                // 최소 별점
+    sort: localStorage.getItem("tj-book-sort") || "recent",
+    size: localStorage.getItem("tj-book-size") || "md",
+    cmpOn: false, compare: []                // 나란히 비교
+  },
   period: localStorage.getItem("tj-period") || "all",   // 약점 분석 기간
   pending: [],           // 편집 중인 이미지 [{id,thumb,blob,isNew}]
   removed: []            // 편집 중 제거된 기존 이미지 id
@@ -1323,7 +1440,7 @@ function dayPnl(list){
 
 /* ---------------- rendering: shell ---------------- */
 function render(){
-  _visCache = null;
+  _visCache = null; _ownerCache = null;
   renderView();
   const on = $("#tabs button.on");
   if(on && on.scrollIntoView) on.scrollIntoView({block:"nearest", inline:"nearest"});
@@ -1333,9 +1450,11 @@ function render(){
 function renderView(){
   $$("#tabs button").forEach(b=>b.classList.toggle("on", b.dataset.view===state.view));
   const v = state.view;
-  const navHidden = ["stats","lessons","market","weak"].includes(v) ? "none" : "";
+  const navHidden = ["book","stats","lessons","market","weak"].includes(v) ? "none" : "";
+  $("#stats-cards").style.display = v==="book" ? "none" : "";
   $("#prev").style.display = $("#next").style.display = $("#btn-today").style.display = navHidden;
-  if(v==="day")   renderDay();
+  if(v==="book")  renderBook();
+  else if(v==="day")   renderDay();
   else if(v==="week")  renderWeek();
   else if(v==="month") renderMonth();
   else if(v==="market") renderMarket();
@@ -1397,6 +1516,213 @@ function entryList(list){
   if(!list.length) return "";
   return list.slice().sort(cmpEntry).map(entryCard).join("");
 }
+
+/* ---------------- view: 차트북 ----------------
+   차트 이미지 한 장이 카드 한 장이 되는 화면. 일지·장중관찰·메모를 가리지 않고
+   이미지가 붙은 기록을 모두 모아, 패턴 태그로 좁혀 보고 나란히 비교한다. */
+const PATTERNS = ["돌파","눌림목","쌍바닥","쌍봉","삼각수렴","박스권","추세이탈","신고가",
+                  "갭상승","갭하락","장대양봉","거래량급증"];
+const BOOK_SORTS = [{k:"recent",label:"최신"},{k:"old",label:"오래된"},
+                    {k:"rating",label:"별점"},{k:"symbol",label:"종목"}];
+const BOOK_SIZES = [{k:"sm",label:"촘촘"},{k:"md",label:"보통"},{k:"lg",label:"크게"}];
+const BOOK_KINDS = [{k:"all",label:"전체"},{k:"trade",label:"매매"},
+                    {k:"market",label:"장중"},{k:"lesson",label:"메모"}];
+const BOOK_STARS = [{k:0,label:"전체"},{k:3,label:"★3+"},{k:4,label:"★4+"},{k:5,label:"★5"}];
+const MAX_COMPARE = 4;
+const kindOf = e => e.isMarket ? "market" : (e.isLesson ? "lesson" : "trade");
+
+let _ownerCache = null;
+function imgOwner(){                       // 이미지 id → 그 이미지가 속한 기록
+  if(_ownerCache) return _ownerCache;
+  _ownerCache = new Map();
+  state.entries.forEach(e => (e.images||[]).forEach(id => _ownerCache.set(id, e)));
+  return _ownerCache;
+}
+function shotsOf(e){ return (e.images||[]).filter(id=>Store.has(id)); }
+
+/* 필터를 통과한 기록 (태그 칩 개수는 태그 선택 이전 집합에서 센다) */
+function bookEntries(withTags){
+  const b = state.book;
+  const days = (PERIODS.find(p=>p.k===state.period) || PERIODS[0]).days;
+  const from = days ? ymd(addDays(new Date(), -days)) : "";
+  const q = state.query.trim().toLowerCase();
+  let list = state.entries.filter(e => shotsOf(e).length);
+  if(from)        list = list.filter(e => e.date >= from);
+  if(q)           list = list.filter(e => matches(e, q));
+  if(b.kind!=="all") list = list.filter(e => kindOf(e) === b.kind);
+  if(b.stars)     list = list.filter(e => (e.rating||0) >= b.stars);
+  if(withTags && b.tags.length)
+    list = list.filter(e => b.tags.every(t => (e.tags||[]).includes(t)));
+  return list;
+}
+function bookItems(){
+  const b = state.book;
+  const list = bookEntries(true);
+  const by = {
+    old:    (x,y) => -cmpRecent(x,y),
+    rating: (x,y) => ((y.rating||0)-(x.rating||0)) || cmpRecent(x,y),
+    symbol: (x,y) => (x.symbol||"").localeCompare(y.symbol||"","ko") || cmpRecent(x,y),
+  };
+  list.sort(by[b.sort] || cmpRecent);
+  const items = [];
+  list.forEach(e => shotsOf(e).forEach(id => items.push({id, e})));
+  return items;
+}
+function bookTagCounts(){
+  const count = new Map();
+  bookEntries(false).forEach(e => (e.tags||[]).forEach(t => count.set(t, (count.get(t)||0)+1)));
+  return Array.from(count.entries()).sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0],"ko"));
+}
+const bookFiltered = () => state.book.tags.length || state.book.kind!=="all" ||
+                           state.book.stars || state.period!=="all" || state.query.trim();
+
+function segHTML(id, label, opts, cur){
+  return '<div class="seg" id="'+id+'" role="group" aria-label="'+esc(label)+'">'+
+    '<span class="seg-l">'+esc(label)+'</span>'+opts.map(o =>
+    '<button type="button" data-v="'+o.k+'"'+(String(o.k)===String(cur)?' class="on"':'')+'>'+
+    esc(o.label)+'</button>').join("")+'</div>';
+}
+function periodSeg(){
+  return '<div class="seg" role="group" aria-label="기간"><span class="seg-l">기간</span>'+
+    PERIODS.map(x=>'<button type="button" data-period="'+x.k+'"'+
+      (state.period===x.k?' class="on"':'')+'>'+esc(x.label)+'</button>').join("")+'</div>';
+}
+function bookCard(it, i){
+  const e = it.e, b = state.book;
+  const pick = b.compare.indexOf(it.id);
+  const dow = DOW[(parseYmd(e.date).getDay()+6)%7];
+  const meta = [e.date+" ("+dow+")"+(e.time?" "+e.time:"")];
+  if(e.isMarket && e.alignFrom && e.alignTo) meta.push(e.alignFrom+" → "+e.alignTo);
+  if(e.rating) meta.push("★".repeat(e.rating));
+  const shots = shotsOf(e).length;
+  if(shots > 1) meta.push("🖼 "+shots+"장");
+  return ''+
+  '<figure class="bcard'+(pick>=0?" picked":"")+'" data-card="'+i+'" data-id="'+it.id+'">'+
+    '<img loading="lazy" data-loading src="'+BLANK+'" data-img="'+it.id+'"'+
+      (b.size==="lg"?"":' data-thumb="1"')+' data-book="'+i+'" alt="'+esc(e.symbol||"차트")+' 차트">'+
+    '<span class="bc-no">'+(pick>=0?pick+1:"")+'</span>'+
+    '<button type="button" class="bc-edit" data-edit="'+e.id+'" title="이 기록 수정" aria-label="이 기록 수정">✏️</button>'+
+    '<figcaption>'+
+      '<div class="bc-top"><span class="sym">'+esc(e.symbol||"(무제)")+'</span>'+
+        (e.pnl!=null?'<span class="pnl '+cls(e.pnl)+'">'+signed(e.pnl)+'</span>':"")+'</div>'+
+      '<div class="bc-meta">'+meta.map(m=>'<span>'+esc(m)+'</span>').join("")+'</div>'+
+      ((e.tags||[]).length?'<div class="bc-tags">'+e.tags.slice(0,4).map(t=>
+        '<span class="tag">#'+esc(t)+'</span>').join("")+'</div>':"")+
+    '</figcaption>'+
+  '</figure>';
+}
+function renderBook(){
+  const b = state.book;
+  const items = bookItems();
+  const syms = new Set(items.map(it => it.e.symbol).filter(Boolean));
+  const tags = bookTagCounts();
+  const periodLabel = (PERIODS.find(p=>p.k===state.period)||PERIODS[0]).label;
+  const kinds = new Set(state.entries.filter(e=>shotsOf(e).length).map(kindOf));
+  const last = items.length ? items[0].e.date : null;
+
+  // 차트가 주인공인 화면이라 큰 통계 카드는 접고, 요약은 제목 옆 한 줄로 줄인다
+  period("차트북", [periodLabel, "차트 "+items.length.toLocaleString("ko-KR")+"장",
+                    syms.size+"종목", "패턴 "+tags.length+"종",
+                    last?("최근 "+last):""].filter(Boolean).join(" · "));
+  statCards([]);
+
+  const bar = '<div class="book-bar">'+
+    periodSeg()+
+    segHTML("book-sort", "정렬", BOOK_SORTS, b.sort)+
+    segHTML("book-size", "크기", BOOK_SIZES, b.size)+
+    (kinds.size>1 ? segHTML("book-kind", "종류", BOOK_KINDS, b.kind) : "")+
+    segHTML("book-stars", "별점", BOOK_STARS, b.stars)+
+    '<button type="button" class="btn'+(b.cmpOn?" primary":"")+'" id="book-cmp">⊞ 비교</button>'+
+    (bookFiltered()?'<button type="button" class="btn ghost" id="book-reset">필터 해제</button>':"")+
+    '<span class="book-note">'+items.length.toLocaleString("ko-KR")+'장 · '+syms.size+'종목</span>'+
+  '</div>';
+
+  const tagChips = tags.length
+    ? '<div class="chips" id="book-tags">'+tags.slice(0,18).map(([t,n])=>
+        '<button type="button" data-btag="'+esc(t)+'"'+(b.tags.includes(t)?' class="on"':'')+'>#'+
+        esc(t)+' <span style="opacity:.6">'+n+'</span></button>').join("")+'</div>'
+    : "";
+
+  const cmpBar = b.cmpOn
+    ? '<div class="cmp-bar"><b>'+(b.compare.length?b.compare.length+"장 선택됨":"비교할 차트를 고르세요 (최대 "+MAX_COMPARE+"장)")+'</b>'+
+      (b.compare.length>=2?'<button type="button" class="btn primary" id="cmp-open">나란히 보기</button>':"")+
+      (b.compare.length?'<button type="button" class="btn ghost" id="cmp-clear">선택 해제</button>':"")+
+      '<button type="button" class="btn ghost" id="cmp-off">비교 끄기</button></div>'
+    : "";
+
+  if(!items.length){
+    const why = state.entries.some(e=>shotsOf(e).length)
+      ? emptyBox("조건에 맞는 차트가 없습니다",
+          "기간·종류·별점·패턴 태그를 넓혀 보세요.",
+          '<button class="btn" id="book-reset2">필터 해제</button>')
+      : emptyBox("차트북이 비어 있습니다",
+          "일지를 쓸 때 차트 캡처를 붙여넣으면 이 자리에 한 장씩 쌓입니다. "+
+          "패턴 태그(#돌파, #눌림목 …)를 달아두면 나중에 모아서 비교할 수 있습니다.",
+          '<button class="btn primary" id="empty-new">+ 차트 추가</button>'+
+          (state.entries.length?"":'<button class="btn" id="empty-sample">🧪 샘플로 둘러보기</button>'));
+    $("#view").innerHTML = bar+tagChips+why+cmpBar;
+    return;
+  }
+
+  const limit = state.shown.book || 120;
+  const page = items.slice(0, limit);
+  $("#view").innerHTML = bar+tagChips+
+    '<div class="book-grid sz-'+b.size+'">'+page.map(bookCard).join("")+'</div>'+
+    moreBtn("book", items.length - page.length)+cmpBar;
+  document.body.classList.toggle("cmp", b.cmpOn);
+}
+
+/* 라이트박스 캡션 — 어느 화면에서 열어도 그 차트의 맥락이 같이 보인다 */
+function lbCaption(id){
+  const e = imgOwner().get(id);
+  if(!e) return "";
+  const dow = DOW[(parseYmd(e.date).getDay()+6)%7];
+  const bits = ['<span>'+e.date+' ('+dow+')'+(e.time?" "+e.time:"")+'</span>'];
+  if(e.isMarket && e.alignFrom && e.alignTo) bits.push('<span>'+esc(e.alignFrom)+' → '+esc(e.alignTo)+'</span>');
+  if(e.pnl!=null) bits.push('<span class="'+cls(e.pnl)+'" style="font-weight:700">'+signed(e.pnl)+
+    (e.pnlPct!=null?" ("+pct(e.pnlPct)+")":"")+'</span>');
+  if(e.rating) bits.push('<span style="color:var(--warn)">'+"★".repeat(e.rating)+'</span>');
+  (e.tags||[]).forEach(t=>bits.push('<span class="tag">#'+esc(t)+'</span>'));
+  return '<div class="t"><b>'+esc(e.symbol||"(무제)")+'</b>'+bits.join("")+'</div>'+
+    (e.comment?'<div class="c">'+esc(e.comment)+'</div>':"")+
+    (e.lesson?'<div class="l">🎯 '+esc(e.lesson)+'</div>':"");
+}
+
+/* 차트 나란히 비교 */
+function togglePick(id){
+  const b = state.book, i = b.compare.indexOf(id);
+  if(i>=0) b.compare.splice(i,1);
+  else if(b.compare.length >= MAX_COMPARE){ toast("비교는 최대 "+MAX_COMPARE+"장까지입니다"); return; }
+  else b.compare.push(id);
+  render();
+}
+async function openCompare(){
+  const ids = state.book.compare.slice(0, MAX_COMPARE);
+  if(ids.length < 2){ toast("비교하려면 2장 이상 고르세요"); return; }
+  const owner = imgOwner();
+  $("#cmp-note").textContent = ids.length+"장 비교";
+  $("#cmp-grid").className = "cmp-grid n"+ids.length;
+  $("#cmp-grid").innerHTML = ids.map(id=>{
+    const e = owner.get(id) || {};
+    const meta = [e.date||""];
+    if(e.rating) meta.push("★".repeat(e.rating));
+    if(e.pnl!=null) meta.push(signed(e.pnl));
+    if((e.tags||[]).length) meta.push(e.tags.map(t=>"#"+t).join(" "));
+    return '<div class="cmp-item"><img data-cmp="'+id+'" src="'+BLANK+'" alt="비교 차트">'+
+      '<div class="cmp-cap"><b>'+esc(e.symbol||"(무제)")+'</b>'+
+      meta.filter(Boolean).map(m=>'<span>'+esc(m)+'</span>').join("")+'</div></div>';
+  }).join("");
+  $("#compare").classList.add("on");
+  setTimeout(()=>$("#cmp-close").focus(), 40);
+  for(const id of ids){
+    try{
+      const url = await Store.fullURL(id);
+      const img = $('#cmp-grid img[data-cmp="'+id+'"]');
+      if(img) img.src = url;
+    }catch(err){ console.error(err); }
+  }
+}
+function closeCompare(){ $("#compare").classList.remove("on"); }
 
 /* ---------------- view: 일별 ---------------- */
 function renderDay(){
@@ -2353,7 +2679,9 @@ function currentTags(){
 }
 function renderTagPicks(){
   const picked = currentTags();
-  const tags = frequent(e=>e.tags||[], 10);
+  const used = frequent(e=>e.tags||[], 10);
+  // 자주 쓴 태그를 먼저, 그 뒤에 기본 차트 패턴을 채워 차트북 분류를 바로 시작할 수 있게 한다
+  const tags = used.concat(PATTERNS.filter(t=>!used.includes(t))).slice(0, 16);
   $("#tag-picks").innerHTML = tags.length
     ? tags.map(t=>'<button type="button" data-tag="'+esc(t)+'"'+(picked.includes(t)?' class="on"':'')+'>#'+esc(t)+'</button>').join("")
     : "";
@@ -2615,6 +2943,7 @@ function zoomLB(factor, cx, cy){
 async function showLB(){
   const id = lb.ids[lb.i]; if(!id) return;
   const img = $("#lb-img");
+  $("#lb-cap").innerHTML = lbCaption(id);
   img.src = BLANK; fitLB();
   try{ img.src = await Store.fullURL(id); }
   catch(err){ console.error(err); toast("이미지를 불러오지 못했습니다"); }
@@ -2627,6 +2956,12 @@ function openLB(ids,i){
   setTimeout(()=>$("#lb-close").focus(), 40);
 }
 function closeLB(){ $("#lightbox").classList.remove("on"); fitLB(); }
+$("#cmp-close").onclick = closeCompare;
+$("#lb-cap-t").onclick = ()=>{
+  const off = document.body.classList.toggle("lb-nocap");
+  localStorage.setItem("tj-lb-cap", off ? "0" : "1");
+};
+if(localStorage.getItem("tj-lb-cap")==="0") document.body.classList.add("lb-nocap");
 function moveLB(d){
   if(lb.ids.length<2) return;
   lb.i = (lb.i+d+lb.ids.length)%lb.ids.length;
@@ -2704,30 +3039,99 @@ async function exportCSV(){
   await download("trading-journal-"+ymd(new Date())+".csv",
     new Blob(["﻿"+head.map(q).join(",")+"\n"+rows.join("\n")],{type:"text/csv;charset=utf-8"}));
 }
+/* 샘플 차트 — 외부 이미지 없이 캔버스로 캔들차트를 그려 차트북을 바로 채운다 */
+function seeded(seed){ let x = seed>>>0; return ()=> (x = (x*1664525 + 1013904223)>>>0) / 4294967296; }
+const SHAPES = {
+  "돌파":   t => t<.62 ? .0004 : .013,
+  "눌림목": t => t<.35 ? .010 : (t<.55 ? -.009 : .012),
+  "쌍바닥": t => t<.25 ? -.012 : (t<.45 ? .010 : (t<.62 ? -.011 : .013)),
+  "역추세": t => t<.4 ? .004 : -.011,
+  "박스권": t => Math.sin(t*Math.PI*4)*.009,
+  "갭하락": t => t<.5 ? .002 : -.010,
+};
+async function sampleChart(symbol, pattern, seed){
+  const W = 960, H = 560, N = 64;
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const g = cv.getContext("2d");
+  g.fillStyle = "#0d1117"; g.fillRect(0,0,W,H);
+  g.strokeStyle = "rgba(255,255,255,.06)"; g.lineWidth = 1;
+  for(let i=1;i<6;i++){ const y = 70 + (H-130)*i/6; g.beginPath(); g.moveTo(54,y); g.lineTo(W-18,y); g.stroke(); }
+
+  const rnd = seeded(seed), shape = SHAPES[pattern] || SHAPES["돌파"];
+  const bars = []; let price = 100;
+  for(let i=0;i<N;i++){
+    const o = price, c = Math.max(1, o*(1 + shape(i/N) + (rnd()-.5)*.016));
+    bars.push({o, c, h:Math.max(o,c)*(1+rnd()*.007), l:Math.min(o,c)*(1-rnd()*.007)});
+    price = c;
+  }
+  const hi = Math.max(...bars.map(b=>b.h)), lo = Math.min(...bars.map(b=>b.l));
+  const top = 78, bot = H-62, Y = v => bot - (v-lo)/((hi-lo)||1)*(bot-top);
+  const x0 = 54, bw = (W-x0-20)/N;
+
+  const ma = bars.map((_,i)=>{                        // 5봉 이동평균
+    const from = Math.max(0, i-4), seg = bars.slice(from, i+1);
+    return seg.reduce((a,b)=>a+b.c,0)/seg.length;
+  });
+  g.strokeStyle = "#f0b429"; g.lineWidth = 2; g.beginPath();
+  ma.forEach((v,i)=>{ const x = x0+i*bw+bw/2; i ? g.lineTo(x,Y(v)) : g.moveTo(x,Y(v)); });
+  g.stroke();
+
+  bars.forEach((b,i)=>{                                // 캔들 (상승 빨강 / 하락 파랑)
+    const x = x0 + i*bw, cx = x + bw/2, up = b.c >= b.o;
+    g.strokeStyle = g.fillStyle = up ? "#e5484d" : "#3b82f6";
+    g.lineWidth = 1.2;
+    g.beginPath(); g.moveTo(cx, Y(b.h)); g.lineTo(cx, Y(b.l)); g.stroke();
+    const yT = Y(Math.max(b.o,b.c)), hgt = Math.max(1.5, Math.abs(Y(b.o)-Y(b.c)));
+    g.fillRect(x+1.5, yT, Math.max(2, bw-3), hgt);
+  });
+
+  g.fillStyle = "#e7ecf3"; g.font = "bold 27px system-ui,-apple-system,sans-serif";
+  g.fillText(symbol, 24, 42);
+  g.fillStyle = "#8b96a5"; g.font = "16px system-ui,-apple-system,sans-serif";
+  g.fillText("#"+pattern+" · 샘플 차트", 24, 66);
+
+  const tc = document.createElement("canvas");
+  tc.width = 400; tc.height = Math.round(400*H/W);
+  tc.getContext("2d").drawImage(cv, 0, 0, tc.width, tc.height);
+  return { id:uid(), blob: await canvasBlob(cv,"image/jpeg",.9),
+           thumb: tc.toDataURL("image/jpeg",.72), w:W, h:H, isNew:true };
+}
+
 async function addSample(){
   const base = new Date(); const mk=(off,o)=>Object.assign({
     id:uid(), date:ymd(addDays(base,-off)), time:"09:"+pad(10+off), side:"long",
-    entry:null, exit:null, qty:null, fee:null, pnlPct:null, tags:[], comment:"", lesson:"", isLesson:false, rating:3,
+    entry:null, exit:null, qty:null, fee:null, pnlPct:null, tags:[], comment:"", lesson:"", isLesson:false,
+    isMarket:false, alignFrom:"", alignTo:"", rating:3,
     images:[], createdAt:new Date().toISOString(), updatedAt:new Date().toISOString()
   }, o);
   const s = [
-    mk(0,{symbol:"삼성전자", entry:71500, exit:73200, qty:100, fee:3200, pnl:166800, pnlPct:2.38, rating:4,
-        tags:["돌파매매","분할익절"], comment:"진입 근거: 전고점 돌파 + 거래량 증가\n청산 근거: 1차 목표가 도달, 절반 익절 후 나머지 본절 스톱\n잘한 점: 계획대로 분할 청산\n개선할 점: 진입이 조금 늦었다",
-        lesson:"돌파 확인 후 진입해도 늦지 않다 — 미리 사서 버티지 말 것."}),
-    mk(1,{symbol:"BTCUSDT", side:"short", entry:64200, exit:64900, qty:0.3, fee:20, pnl:-230, pnlPct:-1.09, rating:2,
+    [mk(0,{symbol:"삼성전자", entry:71500, exit:73200, qty:100, fee:3200, pnl:166800, pnlPct:2.38, rating:4,
+        tags:["돌파","분할익절"], comment:"진입 근거: 전고점 돌파 + 거래량 증가\n청산 근거: 1차 목표가 도달, 절반 익절 후 나머지 본절 스톱\n잘한 점: 계획대로 분할 청산\n개선할 점: 진입이 조금 늦었다",
+        lesson:"돌파 확인 후 진입해도 늦지 않다 — 미리 사서 버티지 말 것."}), "돌파"],
+    [mk(1,{symbol:"BTCUSDT", side:"short", entry:64200, exit:64900, qty:0.3, fee:20, pnl:-230, pnlPct:-1.09, rating:2,
         tags:["역추세","뇌동매매"], comment:"근거 없이 반등 노린 숏. 추세 역행 매매는 금지.",
-        lesson:"추세를 거스르는 자리는 진입하지 않는다."}),
-    mk(3,{symbol:"에코프로", entry:98000, exit:101500, qty:30, fee:1500, pnl:103500, pnlPct:3.57, rating:5,
+        lesson:"추세를 거스르는 자리는 진입하지 않는다."}), "역추세"],
+    [mk(3,{symbol:"에코프로", entry:98000, exit:101500, qty:30, fee:1500, pnl:103500, pnlPct:3.57, rating:5,
         tags:["눌림목","손절지킴"], comment:"20일선 눌림 지지 확인 후 진입. 손절 라인 명확히 두고 대응.",
-        lesson:"손절선을 먼저 정한 매매는 결과와 무관하게 좋은 매매다."}),
-    mk(4,{symbol:"NVDA", entry:118.4, exit:115.9, qty:50, fee:5, pnl:-130, pnlPct:-2.11, rating:3,
-        tags:["갭상승추격"], comment:"갭 상승 추격 진입 실패. 시초가 30분은 관망하기로.",
-        lesson:"시초가 30분은 관망한다."}),
-    mk(7,{symbol:"카카오", entry:38500, exit:39900, qty:80, fee:900, pnl:111100, pnlPct:3.64, rating:4,
-        tags:["돌파매매"], comment:"박스권 상단 돌파. 계획한 목표가에서 전량 청산."})
+        lesson:"손절선을 먼저 정한 매매는 결과와 무관하게 좋은 매매다."}), "눌림목"],
+    [mk(4,{symbol:"NVDA", entry:118.4, exit:115.9, qty:50, fee:5, pnl:-130, pnlPct:-2.11, rating:3,
+        tags:["갭하락"], comment:"갭 상승 추격 진입 실패. 시초가 30분은 관망하기로.",
+        lesson:"시초가 30분은 관망한다."}), "갭하락"],
+    [mk(7,{symbol:"카카오", entry:38500, exit:39900, qty:80, fee:900, pnl:111100, pnlPct:3.64, rating:4,
+        tags:["돌파","박스권"], comment:"박스권 상단 돌파. 계획한 목표가에서 전량 청산."}), "박스권"],
+    [mk(2,{symbol:"코스피", isMarket:true, alignFrom:"역배열", alignTo:"정배열", rating:4, pnl:null,
+        tags:["쌍바닥"], comment:"장 시작 30분 만에 5·20일선 정배열 전환. 거래량 동반."}), "쌍바닥"],
   ];
-  for(const e of s) await Store.saveEntry(e, []);
-  await loadAll(); render(); toast("샘플 5건이 추가되었습니다");
+  for(const [e, pattern] of s){
+    let pending = [];
+    try{
+      const chart = await sampleChart(e.symbol, pattern, e.date.replace(/\D/g,"")*1 + e.symbol.length);
+      e.images = [chart.id];
+      pending = [chart];
+    }catch(err){ console.warn("샘플 차트 생성 실패", err); }
+    await Store.saveEntry(e, pending);
+  }
+  await loadAll(); render(); toast("샘플 "+s.length+"건(차트 포함)이 추가되었습니다");
 }
 
 /* ---------------- events ---------------- */
@@ -2743,7 +3147,7 @@ function gotoDate(k){ state.cursor = parseYmd(k); state.view="day"; localStorage
 $("#tabs").addEventListener("click", e=>{
   const b = e.target.closest("button[data-view]"); if(!b) return;
   state.view = b.dataset.view;
-  state.shown = {lessons:60, market:60, month:60};
+  state.shown = {lessons:60, market:60, month:60, book:120};
   localStorage.setItem("tj-view", state.view); render();
 });
 $("#prev").onclick = ()=>shiftCursor(-1);
@@ -2751,6 +3155,7 @@ $("#next").onclick = ()=>shiftCursor(1);
 $("#btn-today").onclick = ()=>{ state.cursor=new Date(); render(); };
 function newRecord(){
   if(state.view==="market")       openModal(null, ymd(new Date()), "market");
+  else if(state.view==="book")    openModal(null, ymd(new Date()));
   else if(state.view==="lessons") openLesson(null);
   else                            openModal(null);
 }
@@ -2758,11 +3163,58 @@ $("#btn-new").onclick = newRecord;
 $("#fab").onclick = newRecord;
 $("#q").addEventListener("input", e=>{
   state.query = e.target.value;
-  state.shown = {lessons:60, market:60, month:60};
+  state.shown = {lessons:60, market:60, month:60, book:120};
   render();
 });
 
 $("#view").addEventListener("click", e=>{
+  const b = state.book;
+
+  // --- 차트북 ---
+  const card = e.target.closest(".bcard");
+  if(card && !e.target.closest(".bc-edit")){
+    if(b.cmpOn){ togglePick(card.dataset.id); return; }
+    const items = bookItems();
+    openLB(items.map(it=>it.id), +card.dataset.card);
+    return;
+  }
+  const bedit = e.target.closest(".bc-edit");
+  if(bedit){
+    const en = state.entries.find(x=>x.id===bedit.dataset.edit);
+    if(en) (en.isLesson ? openLesson(en) : openModal(en));
+    return;
+  }
+  const btag = e.target.closest("[data-btag]");
+  if(btag){
+    const t = btag.dataset.btag, i = b.tags.indexOf(t);
+    if(i>=0) b.tags.splice(i,1); else b.tags.push(t);
+    state.shown.book = 120; render(); return;
+  }
+  const seg = e.target.closest(".seg button[data-v]");
+  if(seg){
+    const id = seg.parentElement.id, v = seg.dataset.v;
+    if(id==="book-sort"){ b.sort = v; localStorage.setItem("tj-book-sort", v); }
+    else if(id==="book-size"){ b.size = v; localStorage.setItem("tj-book-size", v); }
+    else if(id==="book-kind"){ b.kind = v; }
+    else if(id==="book-stars"){ b.stars = +v; }
+    else return;
+    state.shown.book = 120; render(); return;
+  }
+  if(e.target.closest("#book-cmp")){
+    b.cmpOn = !b.cmpOn;
+    if(!b.cmpOn) b.compare = [];
+    render(); return;
+  }
+  if(e.target.closest("#cmp-off")){ b.cmpOn = false; b.compare = []; render(); return; }
+  if(e.target.closest("#cmp-clear")){ b.compare = []; render(); return; }
+  if(e.target.closest("#cmp-open")){ openCompare(); return; }
+  if(e.target.closest("#book-reset") || e.target.closest("#book-reset2")){
+    b.tags = []; b.kind = "all"; b.stars = 0;
+    state.period = "all"; localStorage.setItem("tj-period", "all");
+    state.query = ""; $("#q").value = "";
+    state.shown.book = 120; render(); return;
+  }
+
   const img = e.target.closest(".shots img");
   if(img){
     const en = state.entries.find(x=>x.id===img.dataset.entry);
@@ -2971,7 +3423,11 @@ $("#m-wipe").onclick = async ()=>{
 document.addEventListener("keydown", e=>{
   if(modal.open) return;
   const typing = /INPUT|TEXTAREA|SELECT/.test((e.target.tagName||""));
-  if(e.key==="Escape"){ closeLB(); return; }
+  if(e.key==="Escape"){
+    if($("#compare").classList.contains("on")){ closeCompare(); return; }
+    closeLB(); return;
+  }
+  if($("#compare").classList.contains("on")) return;
   if($("#lightbox").classList.contains("on")){
     if(e.key==="ArrowLeft")  moveLB(-1);
     if(e.key==="ArrowRight") moveLB(1);
@@ -2985,8 +3441,8 @@ document.addEventListener("keydown", e=>{
   else if(e.key==="ArrowLeft") shiftCursor(-1);
   else if(e.key==="ArrowRight") shiftCursor(1);
   else if(e.key==="t" || e.key==="T"){ state.cursor=new Date(); render(); }
-  else if(["1","2","3","4","5","6","7"].includes(e.key)){
-    state.view = ["day","week","month","market","lessons","weak","stats"][+e.key-1];
+  else if(["1","2","3","4","5","6","7","8"].includes(e.key)){
+    state.view = ["book","day","week","month","market","lessons","weak","stats"][+e.key-1];
     localStorage.setItem("tj-view", state.view); render();
   }
 });

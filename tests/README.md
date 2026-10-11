@@ -30,6 +30,7 @@ Chromium 경로는 `TJ_CHROME` 로 지정할 수 있습니다 (기본: `/opt/pw-
 | `cloud-mode` | Supabase(목 서버) 가입·로그인, 토큰 갱신, 기기 간 동기화 |
 | `embed-themes` | 아티팩트 임베드 환경에서 시스템 라이트/다크 대응 |
 | `embed-downloads` | 임베드 환경의 파일 저장 경로(호스트 API) 폴백 |
+| `chartbook` | 차트북: 기본 화면, 패턴/별점/종류 필터, 정렬·크기, 라이트박스 캡션, 나란히 비교 |
 | `standalone-tree` | 독립 저장소 트리에서 화면만 서빙되고 소스가 노출되지 않음 |
 | `db-persistence` | 서버 재시작 후 일지·이미지 보존, 계정 간 격리 (API 직접 호출) |
 

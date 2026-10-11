@@ -8,6 +8,7 @@ p.on('pageerror',e=>errs.push(e.message));
 p.on('console',m=>{ if(m.type()==='error') errs.push('console: '+m.text()); });
 p.on('dialog',d=>d.accept());
 await p.goto(FILE_URL); await p.waitForTimeout(500);
+await p.click('#tabs button[data-view="day"]'); await p.waitForTimeout(300);  // 기본 화면이 차트북이므로 일별로 이동
 
 await p.click('#btn-new');
 await p.fill('#f-symbol','삼성전자');

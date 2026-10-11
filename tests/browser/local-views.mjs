@@ -9,6 +9,7 @@ page.on('pageerror', e=>errors.push('PAGEERROR: '+e.message));
 page.on('dialog', d=>d.accept());
 await page.goto(FILE_URL);
 await page.waitForTimeout(400);
+await page.click('#tabs button[data-view="day"]'); await page.waitForTimeout(300);  // 기본 화면이 차트북이므로 일별로 이동
 // 빈 상태 확인
 console.log('empty state:', (await page.textContent('.empty'))?.slice(0,20));
 await page.click('#btn-menu'); await page.click('#m-sample'); await page.waitForTimeout(600);

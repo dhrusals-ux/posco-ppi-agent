@@ -25,6 +25,7 @@ await p.fill('#a-user','me@example.com'); await p.fill('#a-pass','journal1234');
 await p.click('#a-register'); await p.waitForTimeout(1200);
 console.log('after signup — app shown:', !(await p.locator('#auth.on').count()),
             '| acct:', (await p.textContent('#acct')).replace(/\s+/g,' ').slice(0,28));
+await p.click('#tabs button[data-view="day"]'); await p.waitForTimeout(300);  // 기본 화면이 차트북이므로 일별로 이동
 
 await p.click('#btn-new');
 await p.fill('#f-symbol','에코프로');
@@ -50,6 +51,7 @@ const p2 = await newDevice('B');
 await p2.goto(APP); await p2.waitForTimeout(700);
 await p2.fill('#a-user','me@example.com'); await p2.fill('#a-pass','journal1234');
 await p2.click('button[type=submit]'); await p2.waitForTimeout(1800);
+await p2.click('#tabs button[data-view="day"]'); await p2.waitForTimeout(400);  // 기본 화면이 차트북이므로 일별로 이동
 console.log('B synced:', await p2.locator('.entry').count(), 'entries |',
             await p2.textContent('.entry .sym'), '| shots:', await p2.locator('.shots img').count());
 await p2.screenshot({path:TMP+'/cloud-deviceB.png'});

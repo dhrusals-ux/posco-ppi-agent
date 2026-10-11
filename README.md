@@ -158,7 +158,7 @@ posco-ppi-agent/
 
 ## 📓 부록: 매매일지 웹앱 (`trading-journal/`)
 
-이 저장소에는 PPI 에이전트와 별개로, **차트 이미지 + 코멘트로 매매를 복기하고 일별·주별·월간 성과를 관리하는 정적 웹앱**이 함께 들어 있습니다.
+이 저장소에는 PPI 에이전트와 별개로, **차트를 모아 패턴별로 비교하는 차트북 + 매매 복기 일지** 정적 웹앱이 함께 들어 있습니다. 기본 화면이 차트북이고, 일별·주별·월간 성과 관리와 약점 분석이 함께 들어 있습니다.
 
 두 가지 방식으로 쓸 수 있습니다.
 
@@ -172,7 +172,7 @@ posco-ppi-agent/
 - 접속 주소(배포): [`docs/DEPLOY-VERCEL.md`](docs/DEPLOY-VERCEL.md) — Vercel에 화면 올리기
 - 상업 서비스 필수 문서(약관·개인정보처리방침·환불정책 초안): [`docs/legal/`](docs/legal/)
 - 독립 저장소 트리 생성: `python tools/make-standalone.py`
-- 전체 검증(브라우저 자동화 14종, SQLite·PostgreSQL 양쪽): `bash tests/run.sh` — [`tests/README.md`](tests/README.md)
+- 전체 검증(브라우저 자동화 15종, SQLite·PostgreSQL 양쪽): `bash tests/run.sh` — [`tests/README.md`](tests/README.md)
 - 무료 클라우드 설정: [`supabase/README.md`](supabase/README.md) — 로그인·DB·이미지
 - 자체 서버 설정·배포·API: [`server/README.md`](server/README.md)
 - 앱 사용법·단축키: [`trading-journal/README.md`](trading-journal/README.md)

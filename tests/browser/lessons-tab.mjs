@@ -24,6 +24,8 @@ if(MODE!=='local'){
   await p.waitForTimeout(1500);
 }
 
+await p.click('#tabs button[data-view="day"]'); await p.waitForTimeout(400);  // 기본 화면이 차트북이므로 일별로 이동
+
 // 1) 매매 일지에 시사점 작성
 await p.click('#btn-new');
 await p.fill('#f-symbol','삼성전자');
